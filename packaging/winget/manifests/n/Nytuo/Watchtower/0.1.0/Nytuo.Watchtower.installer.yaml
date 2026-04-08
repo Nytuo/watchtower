@@ -1,0 +1,14 @@
+PackageIdentifier: Nytuo.Watchtower
+PackageVersion: 0.1.0
+InstallerType: nullsoft
+Scope: user
+InstallModes:
+  - interactive
+  - silent
+  - silentWithProgress
+Installers:
+  - Architecture: x64
+    InstallerUrl: https://github.com/Nytuo/watchtower/releases/download/v0.1.0/Watchtower_0.1.0_x64-setup.exe
+    InstallerSha256: cc26f75fdbc300f6e6269639acd92ecfec95017ba9accd3d884c58f01ca8bbcb
+ManifestType: installer
+ManifestVersion: 1.6.0

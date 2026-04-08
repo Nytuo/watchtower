@@ -1,0 +1,137 @@
+name: flathub-publish
+
+# Required repo secret:
+#   FLATHUB_TOKEN - classic PAT with `public_repo` scope from a maintainer of
+#                   flathub/fr.nytuo.watchtower
+
+on:
+  release:
+    types: [published]
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: 'Release tag to publish (defaults to the latest release)'
+        required: false
+        type: string
+
+concurrency: flathub-publish
+
+env:
+  APP_ID: fr.nytuo.watchtower
+  MANIFEST: packaging/flatpak/fr.nytuo.watchtower.yml
+  CARGO_LOCK: src-tauri/Cargo.lock
+  PACKAGE_LOCK: package-lock.json
+
+jobs:
+  publish:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Resolve tag
+        id: tag
+        env:
+          GH_TOKEN: ${{ github.token }}
+          INPUT_TAG: ${{ inputs.tag }}
+          RELEASE_TAG: ${{ github.event.release.tag_name }}
+        run: |
+          set -euo pipefail
+          TAG="${INPUT_TAG:-$RELEASE_TAG}"
+          if [ -z "$TAG" ]; then
+            TAG=$(gh release view --repo "$GITHUB_REPOSITORY" --json tagName -q .tagName)
+          fi
+          VERSION=$(printf '%s' "$TAG" | sed -E 's/^([A-Za-z][A-Za-z0-9_.-]*-)?v?//')
+          DATE=$(gh release view "$TAG" --repo "$GITHUB_REPOSITORY" --json publishedAt -q '.publishedAt[0:10]')
+          echo "tag=$TAG" >> "$GITHUB_OUTPUT"
+          echo "version=$VERSION" >> "$GITHUB_OUTPUT"
+          echo "date=${DATE:-$(date -u +%F)}" >> "$GITHUB_OUTPUT"
+
+      # Packaging comes from the workflow's ref, sources from the tag, so a
+      # release cut before a packaging fix can still be published.
+      - uses: actions/checkout@v4
+        with:
+          path: app
+
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ steps.tag.outputs.tag }}
+          path: src
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+
+      - name: Generate Flathub files
+        env:
+          TAG: ${{ steps.tag.outputs.tag }}
+          VERSION: ${{ steps.tag.outputs.version }}
+          DATE: ${{ steps.tag.outputs.date }}
+        run: |
+          set -euo pipefail
+          pip install --quiet aiohttp toml tomlkit \
+            "git+https://github.com/flatpak/flatpak-builder-tools.git#subdirectory=node"
+          curl -fsSLO https://raw.githubusercontent.com/flatpak/flatpak-builder-tools/master/cargo/flatpak-cargo-generator.py
+          DIR="app/$(dirname "$MANIFEST")"
+          python3 flatpak-cargo-generator.py "src/$CARGO_LOCK" -o "$DIR/cargo-sources.json"
+          python3 -m flatpak_node_generator npm "src/$PACKAGE_LOCK" -o "$DIR/node-sources.json"
+          python3 "$DIR/flathub_sync.py" \
+            --manifest "app/$MANIFEST" \
+            --url "https://github.com/${GITHUB_REPOSITORY}.git" \
+            --tag "$TAG" \
+            --commit "$(git -C src rev-parse HEAD)" \
+            --version "$VERSION" \
+            --date "$DATE" \
+            --out flathub-out
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: flathub-files
+          path: flathub-out
+
+      - name: Check Flathub repo access
+        id: access
+        env:
+          GH_TOKEN: ${{ secrets.FLATHUB_TOKEN }}
+        run: |
+          if [ -z "$GH_TOKEN" ]; then
+            echo "::notice::FLATHUB_TOKEN not set — files uploaded as an artifact only."
+            echo "ok=false" >> "$GITHUB_OUTPUT"
+          elif ! gh api "repos/flathub/$APP_ID" --silent 2>/dev/null; then
+            echo "::notice::flathub/$APP_ID does not exist yet (app not accepted) — files uploaded as an artifact only."
+            echo "ok=false" >> "$GITHUB_OUTPUT"
+          else
+            echo "ok=true" >> "$GITHUB_OUTPUT"
+          fi
+
+      - uses: actions/checkout@v4
+        if: steps.access.outputs.ok == 'true'
+        with:
+          repository: flathub/${{ env.APP_ID }}
+          token: ${{ secrets.FLATHUB_TOKEN }}
+          path: flathub
+
+      - name: Open pull request on Flathub
+        if: steps.access.outputs.ok == 'true'
+        env:
+          GH_TOKEN: ${{ secrets.FLATHUB_TOKEN }}
+          TAG: ${{ steps.tag.outputs.tag }}
+          VERSION: ${{ steps.tag.outputs.version }}
+        run: |
+          set -euo pipefail
+          cp -a flathub-out/. flathub/
+          cd flathub
+          if git diff --quiet && [ -z "$(git status --porcelain)" ]; then
+            echo "::notice::Flathub repo already up to date for $TAG."
+            exit 0
+          fi
+          BASE=$(git rev-parse --abbrev-ref HEAD)
+          BRANCH="update-$VERSION"
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git checkout -B "$BRANCH"
+          git add -A
+          git commit -m "Update to $VERSION"
+          git push --force origin "$BRANCH"
+          if [ -z "$(gh pr list --repo "flathub/$APP_ID" --head "$BRANCH" --json number -q '.[].number')" ]; then
+            gh pr create --repo "flathub/$APP_ID" --base "$BASE" --head "$BRANCH" \
+              --title "Update to $VERSION" \
+              --body "Automated update to [$TAG](https://github.com/${GITHUB_REPOSITORY}/releases/tag/$TAG)."
+          fi

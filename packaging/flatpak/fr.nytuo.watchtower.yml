@@ -1,0 +1,61 @@
+app-id: fr.nytuo.watchtower
+runtime: org.gnome.Platform
+runtime-version: '50'
+sdk: org.gnome.Sdk
+sdk-extensions:
+  - org.freedesktop.Sdk.Extension.rust-stable
+  - org.freedesktop.Sdk.Extension.node24
+command: watchtower
+finish-args:
+  - --share=ipc
+  - --socket=wayland
+  - --socket=fallback-x11
+  - --device=dri
+  # SSH/SFTP/FTP connections are the whole point of the app.
+  - --share=network
+  # Use the host's ssh-agent for key authentication.
+  - --socket=ssh-auth
+  # SFTP transfers to/from arbitrary local folders and loading key files
+  # from ~/.ssh.
+  - --filesystem=home
+  - --talk-name=org.freedesktop.secrets
+
+build-options:
+  append-path: /usr/lib/sdk/rust-stable/bin:/usr/lib/sdk/node24/bin
+  env:
+    CARGO_HOME: /run/build/watchtower/cargo
+    CARGO_NET_OFFLINE: 'true'
+
+modules:
+  - name: watchtower
+    buildsystem: simple
+    build-options:
+      env:
+        XDG_CACHE_HOME: /run/build/watchtower/flatpak-node/cache
+        npm_config_cache: /run/build/watchtower/flatpak-node/npm-cache
+        npm_config_offline: 'true'
+    build-commands:
+      - npm ci --offline --ignore-scripts
+      - npm run build
+      - cargo --offline build --release --manifest-path src-tauri/Cargo.toml --bin watchtower --features tauri/custom-protocol
+      - install -Dm755 src-tauri/target/release/watchtower ${FLATPAK_DEST}/bin/watchtower
+      - install -Dm644 src-tauri/icons/icon.png ${FLATPAK_DEST}/share/icons/hicolor/512x512/apps/${FLATPAK_ID}.png
+      - install -Dm644 ${FLATPAK_ID}.desktop ${FLATPAK_DEST}/share/applications/${FLATPAK_ID}.desktop
+      - install -Dm644 ${FLATPAK_ID}.metainfo.xml ${FLATPAK_DEST}/share/metainfo/${FLATPAK_ID}.metainfo.xml
+    sources:
+      - type: dir
+        path: ../..
+        skip:
+          - .git
+          - .claude
+          - node_modules
+          - dist
+          - src-tauri/target
+          - packaging/flatpak/build-dir
+          - packaging/flatpak/.flatpak-builder
+      - type: file
+        path: fr.nytuo.watchtower.desktop
+      - type: file
+        path: fr.nytuo.watchtower.metainfo.xml
+      - cargo-sources.json
+      - node-sources.json

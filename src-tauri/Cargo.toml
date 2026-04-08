@@ -1,0 +1,94 @@
+[package]
+name = "watchtower"
+version = "0.1.0"
+edition = "2021"
+description = "Privacy-first SSH/SFTP/FTP client"
+license = "PolyForm-Noncommercial-1.0.0"
+
+[lib]
+name = "watchtower_lib"
+crate-type = ["lib", "cdylib", "staticlib"]
+
+[build-dependencies]
+tauri-build = { version = "2", features = [] }
+
+[dependencies]
+tauri = { version = "2", features = [] }
+tauri-plugin-dialog = "2"
+tauri-plugin-fs = "2"
+tauri-plugin-store = "2"
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+tokio = { version = "1", features = ["full"] }
+uuid = { version = "1", features = ["v4", "serde"] }
+thiserror = "2"
+log = "0.4"
+futures = "0.3"
+
+# Logging
+tracing = "0.1"
+tracing-subscriber = { version = "0.3", features = ["env-filter", "time"] }
+tracing-appender = "0.2"
+tracing-log = "0.2"
+time = { version = "0.3", features = ["formatting"] }
+
+# Crypto
+argon2 = "0.5"
+chacha20poly1305 = { version = "0.10", features = ["std"] }
+rand = "0.8"
+zeroize = { version = "1", features = ["derive"] }
+# Secret Service only on Linux: the kernel keyring (linux-native) is blocked
+# inside Flatpak and does not survive a reboot anyway.
+keyring = { version = "3", features = ["apple-native", "windows-native", "sync-secret-service", "crypto-rust"] }
+
+# SSH
+russh = "0.46"
+russh-keys = "0.46"
+russh-sftp = "2.1.1"
+ssh-key = { version = "0.6", features = ["ed25519", "rsa", "rand_core", "encryption", "std"] }
+async-trait = "0.1"
+
+# WebSocket transport (SSH-over-WSS)
+tokio-tungstenite = { version = "0.24", features = ["rustls-tls-webpki-roots"] }
+futures-util = "0.3"
+bytes = "1"
+data-encoding = "2"
+
+# Sync / cloud import
+reqwest = { version = "0.12", default-features = false, features = ["rustls-tls", "json"] }
+sha2 = "0.10"
+hmac = "0.12"
+tauri-plugin-deep-link = "2"
+
+# Telnet / FTP
+suppaftp = { version = "6", default-features = false, features = ["rustls"] }
+rustls = "0.23"
+webpki-roots = "0.26"
+snow = { version = "0.10", default-features = false, features = ["default-resolver", "use-curve25519", "use-chacha20poly1305", "use-sha2", "use-getrandom", "std"] }
+spake2 = "0.4"
+qrcode = { version = "0.14.1", default-features = false, features = ["svg"] }
+if-addrs = "0.15.0"
+
+[target.'cfg(not(any(target_os = "android", target_os = "ios")))'.dependencies]
+# Local-time log stamps; num_threads (pulled by local-offset) does not build on iOS.
+tracing-subscriber = { version = "0.3", features = ["local-time"] }
+time = { version = "0.3", features = ["local-offset"] }
+mdns-sd = "0.21.5"
+portable-pty = "0.8"
+tauri-plugin-shell = "2"
+
+[target.'cfg(unix)'.dependencies]
+libc = "0.2"
+
+[[bin]]
+name = "wt"
+path = "src/bin/wt.rs"
+
+[[bin]]
+name = "watchtower"
+path = "src/main.rs"
+
+[target.'cfg(any(target_os = "android", target_os = "ios"))'.dependencies]
+tauri-plugin-barcode-scanner = "2"
+tauri-plugin-biometric = "2"
+tauri-plugin-wt-native = { path = "plugins/tauri-plugin-wt-native" }

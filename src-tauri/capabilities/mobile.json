@@ -1,0 +1,23 @@
+{
+  "$schema": "../gen/schemas/mobile-schema.json",
+  "identifier": "mobile",
+  "description": "Capability for the main window on Android and iOS",
+  "windows": [
+    "main"
+  ],
+  "platforms": [
+    "android",
+    "iOS"
+  ],
+  "permissions": [
+    "core:default",
+    "dialog:default",
+    "store:default",
+    "deep-link:default",
+    "core:event:default",
+    "core:window:default",
+    "core:window:allow-set-title",
+    "barcode-scanner:default",
+    "biometric:default"
+  ]
+}
