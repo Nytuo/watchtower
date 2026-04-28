@@ -14,6 +14,10 @@
 	<a href="https://github.com/Nytuo/watchtower/discussions">Ask a Question</a>
 </div>
 
+> [!WARNING]
+> WatchTower is still in development, and not an active one for the moment. So, it may contain bugs and cause git issues. Use at your own risk.
+
+
 ---
 
 ## Table of Contents
