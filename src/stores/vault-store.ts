@@ -8,6 +8,9 @@ import {
   vaultAddServer,
   vaultUpdateServer,
   vaultDeleteServer,
+  vaultDuplicateServer,
+  vaultBulkUpdateServers,
+  vaultReorderServers,
   vaultListGroups,
   vaultAddGroup,
   vaultUpdateGroup,
@@ -20,6 +23,7 @@ import {
   vaultAddSnippet,
   vaultUpdateSnippet,
   vaultDeleteSnippet,
+  vaultTouchSnippet,
   vaultListKeychains,
   vaultAddKeychain,
   vaultUpdateKeychain,
@@ -46,6 +50,7 @@ import {
   type KnownHost,
   type VaultSettings,
 } from "@/lib/tauri";
+import { useUiStore } from "@/stores/ui-store";
 
 interface VaultStore {
   isUnlocked: boolean;
@@ -71,6 +76,11 @@ interface VaultStore {
   addServer: (params: AddServerParams) => Promise<ServerInfo>;
   updateServer: (params: UpdateServerParams) => Promise<ServerInfo>;
   deleteServer: (id: string) => Promise<void>;
+  duplicateServer: (id: string) => Promise<ServerInfo>;
+  bulkUpdateServers: (
+    params: Parameters<typeof vaultBulkUpdateServers>[0],
+  ) => Promise<void>;
+  reorderServers: (orderedIds: string[]) => Promise<void>;
 
   refreshGroups: () => Promise<void>;
   addGroup: (
@@ -95,20 +105,14 @@ interface VaultStore {
   deleteTag: (id: string) => Promise<void>;
 
   refreshSnippets: () => Promise<void>;
-  addSnippet: (params: {
-    name: string;
-    content: string;
-    description?: string;
-    tags?: string[];
-  }) => Promise<Snippet>;
-  updateSnippet: (params: {
-    id: string;
-    name?: string;
-    content?: string;
-    description?: string;
-    tags?: string[];
-  }) => Promise<Snippet>;
+  addSnippet: (
+    params: Parameters<typeof vaultAddSnippet>[0],
+  ) => Promise<Snippet>;
+  updateSnippet: (
+    params: Parameters<typeof vaultUpdateSnippet>[0],
+  ) => Promise<Snippet>;
   deleteSnippet: (id: string) => Promise<void>;
+  touchSnippet: (id: string) => Promise<void>;
 
   refreshKeychains: () => Promise<void>;
   addKeychain: (
@@ -173,6 +177,14 @@ interface VaultStore {
     logRetentionDays?: number;
     confirmOnDisconnect?: boolean;
     confirmOnDelete?: boolean;
+    hostKeyPolicy?: string;
+    autoLockMinutes?: number;
+    autoReconnect?: boolean;
+    syncMode?: string;
+    syncUrl?: string;
+    syncUsername?: string;
+    syncPassword?: string;
+    syncAuto?: boolean;
   }) => Promise<VaultSettings>;
 
   clearError: () => void;
@@ -303,6 +315,32 @@ export const useVaultStore = create<VaultStore>((set, get) => ({
     } catch (e) {
       set({ error: String(e) });
       throw e;
+    }
+  },
+
+  duplicateServer: async (id) => {
+    const s = await vaultDuplicateServer(id);
+    await get().refreshServers();
+    return s;
+  },
+
+  bulkUpdateServers: async (params) => {
+    await vaultBulkUpdateServers(params);
+    await get().refreshServers();
+  },
+
+  reorderServers: async (orderedIds: string[]) => {
+    set((s) => ({
+      servers: s.servers.map((sv) => {
+        const i = orderedIds.indexOf(sv.id);
+        return i === -1 ? sv : { ...sv, order: i };
+      }),
+    }));
+    try {
+      await vaultReorderServers(orderedIds);
+    } catch (e) {
+      set({ error: String(e) });
+      await get().refreshServers();
     }
   },
 
@@ -439,6 +477,15 @@ export const useVaultStore = create<VaultStore>((set, get) => ({
     } catch (e) {
       set({ error: String(e) });
       throw e;
+    }
+  },
+
+  touchSnippet: async (id) => {
+    try {
+      await vaultTouchSnippet(id);
+      await get().refreshSnippets();
+    } catch {
+      /* non-critical */
     }
   },
 
@@ -583,6 +630,10 @@ export const useVaultStore = create<VaultStore>((set, get) => ({
     try {
       const settings = await vaultGetSettings();
       set({ settings });
+      if (settings.theme) {
+        const { theme, setTheme } = useUiStore.getState();
+        if (settings.theme !== theme) setTheme(settings.theme);
+      }
     } catch (e) {
       set({ error: String(e) });
     }

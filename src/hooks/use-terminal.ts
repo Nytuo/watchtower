@@ -3,25 +3,101 @@ import { Terminal } from "@xterm/xterm";
 import { FitAddon } from "@xterm/addon-fit";
 import { WebLinksAddon } from "@xterm/addon-web-links";
 import { SearchAddon } from "@xterm/addon-search";
+import { SerializeAddon } from "@xterm/addon-serialize";
+import { Unicode11Addon } from "@xterm/addon-unicode11";
+import { WebglAddon } from "@xterm/addon-webgl";
 import {
-  sshWrite,
-  sshResize,
   sshConnect,
+  sshConnectAdhoc,
   sshSendStartupCommand,
   sshDetectOS,
+  tunnelStart,
+  vaultMarkConnected,
+  telnetConnect,
+  moshConnect,
+  termKindWrite,
+  termKindResize,
   Channel,
 } from "@/lib/tauri";
 import { useSessionStore } from "@/stores/session-store";
 import { useVaultStore } from "@/stores/vault-store";
 import { useUiStore } from "@/stores/ui-store";
+import { useAdhocStore } from "@/stores/adhoc-store";
 import { osReleaseIdToSlug } from "@/components/icons/os-icons";
-import type { ServerInfo, ConnectionLog } from "@/lib/tauri";
+import { terminalPalette } from "@/lib/themes";
+import { connectServer } from "@/lib/connect";
+import { confirmDialog } from "@/stores/dialog-store";
+import { useKbdStore } from "@/stores/kbd-store";
+import {
+  vaultAddKnownHost,
+  vaultDeleteKnownHost,
+  sshSubmitKbd,
+} from "@/lib/tauri";
+import type { ServerInfo, ConnectionLog, KbdPrompt } from "@/lib/tauri";
+
+async function handleHostKeyPrompt(
+  m: RegExpMatchArray,
+  server: ServerInfo,
+  reconnect: () => void,
+) {
+  const kind = m[1];
+  const keyType = m[2];
+  const fp = m[3];
+  const expected = m[4];
+
+  const ok = await confirmDialog({
+    title: kind === "MISMATCH" ? "⚠ Host key CHANGED" : "Trust this host key?",
+    message:
+      kind === "MISMATCH"
+        ? `The server now presents a different ${keyType} key.\n\nExpected  SHA256:${expected}\nOffered   SHA256:${fp}\n\nThis is what a man-in-the-middle attack looks like. Only continue if you personally know the key was rotated.`
+        : `${server.host}:${server.port}\n${keyType}  SHA256:${fp}\n\nAdd it to your known hosts and connect?`,
+    confirmLabel:
+      kind === "MISMATCH" ? "Replace key & connect" : "Trust & connect",
+    danger: kind === "MISMATCH",
+  });
+  if (!ok) return;
+
+  try {
+    if (kind === "MISMATCH") {
+      await vaultDeleteKnownHost(server.host, server.port);
+    }
+    await vaultAddKnownHost({
+      host: server.host,
+      port: server.port,
+      keyType,
+      keyFingerprint: fp,
+      trusted: true,
+    });
+    reconnect();
+  } catch {
+    /* surfaced elsewhere */
+  }
+}
 
 import "@xterm/xterm/css/xterm.css";
 
 interface UseTerminalOptions {
   sessionId: string;
   server: ServerInfo;
+}
+
+const FONT_SCALE_KEY = "watchtower:term:fontScale";
+const SCROLLBACK_PREFIX = "watchtower:term:scrollback:";
+
+function getFontScale(): number {
+  try {
+    const v = parseFloat(localStorage.getItem(FONT_SCALE_KEY) || "1");
+    return Number.isFinite(v) && v > 0 ? v : 1;
+  } catch {
+    return 1;
+  }
+}
+function setFontScale(v: number) {
+  try {
+    localStorage.setItem(FONT_SCALE_KEY, String(v));
+  } catch {
+    /* ignore */
+  }
 }
 
 const C = {
@@ -67,13 +143,13 @@ function writeLog(
     error: C.red,
   };
   const glyph: Record<string, string> = {
-    info: "\u2022",
-    success: "\u2713",
-    warning: "\u26a0",
-    error: "\u2717",
+    info: "•",
+    success: "✓",
+    warning: "⚠",
+    error: "✗",
   };
   const color = levelColor[log.level] ?? C.white;
-  const icon = glyph[log.level] ?? "\u2022";
+  const icon = glyph[log.level] ?? "•";
   const detail = log.detail ? ` ${C.dim}(${log.detail})${C.reset}` : "";
   writeLine(
     term,
@@ -86,6 +162,8 @@ export function useTerminal({ sessionId, server }: UseTerminalOptions) {
   const containerRef = useRef<HTMLDivElement>(null);
   const termRef = useRef<Terminal | null>(null);
   const fitAddonRef = useRef<FitAddon | null>(null);
+  const searchAddonRef = useRef<SearchAddon | null>(null);
+  const serializeAddonRef = useRef<SerializeAddon | null>(null);
 
   const { updateSession } = useSessionStore();
   const { updateServer } = useVaultStore();
@@ -103,56 +181,136 @@ export function useTerminal({ sessionId, server }: UseTerminalOptions) {
     }
   }, []);
 
+  const zoom = useCallback(
+    (dir: "in" | "out" | "reset") => {
+      const term = termRef.current;
+      if (!term) return;
+      const settings = useVaultStore.getState().settings;
+      const base = settings?.font_size ?? 14;
+      let scale = getFontScale();
+      if (dir === "in") scale = Math.min(scale + 0.1, 2.5);
+      else if (dir === "out") scale = Math.max(scale - 0.1, 0.5);
+      else scale = 1;
+      setFontScale(scale);
+      term.options.fontSize = Math.round(base * scale);
+      requestAnimationFrame(safeFit);
+    },
+    [safeFit],
+  );
+
+  const clearBuffer = useCallback(() => {
+    termRef.current?.clear();
+  }, []);
+
   useEffect(() => {
     if (!containerRef.current) return;
 
     let disposed = false;
+    let startupSent = false;
+    const clientId = crypto.randomUUID();
+    let startupTimer: ReturnType<typeof setTimeout> | null = null;
+
+    const settings = useVaultStore.getState().settings;
+    const baseFont = settings?.font_size ?? 14;
+    const fontFamily =
+      settings?.font_family || "JetBrains Mono, Menlo, Monaco, monospace";
+
+    const encoding = (settings?.default_encoding || "utf-8").toLowerCase();
+    let decoder: TextDecoder | null = null;
+    if (encoding !== "utf-8" && encoding !== "utf8") {
+      try {
+        decoder = new TextDecoder(encoding, { fatal: false });
+      } catch {
+        decoder = null;
+      }
+    }
 
     const term = new Terminal({
       cursorBlink: true,
-      fontSize: 14,
-      fontFamily: "JetBrains Mono, Menlo, Monaco, monospace",
-      theme: {
-        background: "#0a0a0a",
-        foreground: "#fafafa",
-        cursor: "#fafafa",
-        selectionBackground: "#264f78",
-        black: "#000000",
-        brightBlack: "#666666",
-        red: "#cd3131",
-        brightRed: "#f14c4c",
-        green: "#0dbc79",
-        brightGreen: "#23d18b",
-        yellow: "#e5e510",
-        brightYellow: "#f5f543",
-        blue: "#2472c8",
-        brightBlue: "#3b8eea",
-        magenta: "#bc3fbc",
-        brightMagenta: "#d670d6",
-        cyan: "#11a8cd",
-        brightCyan: "#29b8db",
-        white: "#e5e5e5",
-        brightWhite: "#ffffff",
-      },
+      fontSize: Math.round(baseFont * getFontScale()),
+      fontFamily,
+      scrollback: 10000,
+      allowProposedApi: true,
+      macOptionIsMeta: true,
+      theme: terminalPalette(useUiStore.getState().theme),
     });
 
     const fitAddon = new FitAddon();
+    const searchAddon = new SearchAddon();
+    const serializeAddon = new SerializeAddon();
     term.loadAddon(fitAddon);
     term.loadAddon(new WebLinksAddon());
-    term.loadAddon(new SearchAddon());
+    term.loadAddon(searchAddon);
+    term.loadAddon(serializeAddon);
+    try {
+      const unicode11 = new Unicode11Addon();
+      term.loadAddon(unicode11);
+      term.unicode.activeVersion = "11";
+    } catch {
+      /* optional */
+    }
 
     const container = containerRef.current;
     container.innerHTML = "";
     term.open(container);
 
+    try {
+      const webgl = new WebglAddon();
+      webgl.onContextLoss(() => webgl.dispose());
+      term.loadAddon(webgl);
+    } catch {
+      /* fall back to the DOM renderer */
+    }
+
     termRef.current = term;
     fitAddonRef.current = fitAddon;
+    searchAddonRef.current = searchAddon;
+    serializeAddonRef.current = serializeAddon;
 
     const disposedRef = {
       get current() {
         return disposed;
       },
     };
+
+    // Copy on select.
+    term.onSelectionChange(() => {
+      const sel = term.getSelection();
+      if (sel && sel.length > 0) {
+        navigator.clipboard.writeText(sel).catch(() => {});
+      }
+    });
+
+    // Paste on right-click.
+    const onContextMenu = (e: MouseEvent) => {
+      e.preventDefault();
+      navigator.clipboard
+        .readText()
+        .then((text) => {
+          if (text) term.paste(text);
+        })
+        .catch(() => {});
+    };
+    container.addEventListener("contextmenu", onContextMenu);
+
+    // Zoom shortcuts.
+    term.attachCustomKeyEventHandler((e) => {
+      if (e.type !== "keydown") return true;
+      if (!(e.ctrlKey || e.metaKey)) return true;
+      if (e.key === "=" || e.key === "+") {
+        zoom("in");
+        return false;
+      }
+      if (e.key === "-") {
+        zoom("out");
+        return false;
+      }
+      if (e.key === "0") {
+        zoom("reset");
+        return false;
+      }
+      return true;
+    });
 
     async function run() {
       if (disposed) return;
@@ -165,18 +323,26 @@ export function useTerminal({ sessionId, server }: UseTerminalOptions) {
       );
       if (disposed) return;
 
+      // Replay the previous session's scrollback for context.
+      try {
+        const saved = localStorage.getItem(SCROLLBACK_PREFIX + server.id);
+        if (saved) {
+          term.write(
+            `${C.dim}──── previous session ────${C.reset}\r\n` +
+              saved +
+              `\r\n${C.dim}─────────────────────────${C.reset}\r\n`,
+          );
+        }
+      } catch {
+        /* ignore */
+      }
+
       writeSpacer(term, disposedRef);
       writeLine(
         term,
         disposedRef,
-        `  ${C.bold}${C.blue}Watchtower${C.reset}  ${C.dim}SSH session${C.reset}`,
+        `  ${C.bold}${C.blue}Watchtower${C.reset}  ${C.dim}${(server.protocol || "ssh").toUpperCase()} session${C.reset}`,
       );
-      writeLine(
-        term,
-        disposedRef,
-        `  ${C.dim}\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500${C.reset}`,
-      );
-      writeSpacer(term, disposedRef);
       writeLine(
         term,
         disposedRef,
@@ -187,23 +353,66 @@ export function useTerminal({ sessionId, server }: UseTerminalOptions) {
         disposedRef,
         `  ${C.dim}User${C.reset}   ${C.white}${server.username}${C.reset}`,
       );
-      writeLine(
-        term,
-        disposedRef,
-        `  ${C.dim}Auth${C.reset}   ${C.white}${server.auth_type}${C.reset}`,
-      );
       writeSpacer(term, disposedRef);
 
       const cols = term.cols;
       const rows = term.rows;
 
+      let returnedId = "";
+
+      // Trigger state (when-you-see-X-send-Y)
+      const triggers = (server.advanced?.triggers ?? []).map((t) => ({
+        re: (() => {
+          try {
+            return new RegExp(t.pattern);
+          } catch {
+            return null;
+          }
+        })(),
+        send: t.send.replace(/\\n/g, "\n").replace(/\\t/g, "\t"),
+        once: t.once,
+        fired: false,
+      }));
+      let triggerTail = "";
+
+      const maybeSendStartup = () => {
+        if (startupSent || disposed || !returnedId) return;
+        if (!server.advanced?.startup_command) return;
+        startupSent = true;
+        sshSendStartupCommand(returnedId, server.id).catch(() => {});
+      };
+
       const dataChannel = new Channel<number[]>();
       dataChannel.onmessage = (data: number[]) => {
         if (disposed) return;
+        const bytes = new Uint8Array(data);
+        const text = decoder
+          ? decoder.decode(bytes, { stream: true })
+          : new TextDecoder("utf-8", { fatal: false }).decode(bytes);
         try {
-          term.write(new Uint8Array(data));
+          term.write(decoder ? text : bytes);
         } catch {
           /* disposed */
+        }
+        // Send the startup command only once the shell has produced output.
+        if (!startupSent && server.advanced?.startup_command) {
+          if (startupTimer) clearTimeout(startupTimer);
+          startupTimer = setTimeout(maybeSendStartup, 500);
+        }
+        // Trigger matching against a rolling tail.
+        if (triggers.length && returnedId) {
+          triggerTail = (triggerTail + text).slice(-4096);
+          for (const t of triggers) {
+            if (!t.re || (t.once && t.fired)) continue;
+            if (t.re.test(triggerTail)) {
+              t.fired = true;
+              termKindWrite(
+                sessionKind,
+                returnedId,
+                Array.from(new TextEncoder().encode(t.send)),
+              ).catch(() => {});
+            }
+          }
         }
       };
 
@@ -211,37 +420,91 @@ export function useTerminal({ sessionId, server }: UseTerminalOptions) {
       logChannel.onmessage = (log: ConnectionLog) =>
         writeLog(term, disposedRef, log);
 
+      const kbdChannel = new Channel<KbdPrompt>();
+      kbdChannel.onmessage = (p: KbdPrompt) => {
+        if (disposed) return;
+        useKbdStore
+          .getState()
+          .setPending({ clientId, serverName: server.name, prompt: p });
+      };
+
       writeLine(
         term,
         disposedRef,
-        `  ${C.yellow}\u29d7${C.reset} Connecting to ${C.cyan}${server.host}:${server.port}${C.reset}…`,
+        `  ${C.yellow}⧗${C.reset} Connecting to ${C.cyan}${server.host}:${server.port}${C.reset}…`,
       );
 
+      const proto = (server.protocol || "ssh").toLowerCase();
+      const sessionKind: "ssh" | "telnet" | "mosh" =
+        proto === "telnet" ? "telnet" : proto === "mosh" ? "mosh" : "ssh";
+
       try {
-        const returnedId = await sshConnect(
-          server.id,
-          cols,
-          rows,
-          dataChannel,
-          logChannel,
-        );
+        const t0 = performance.now();
+        const adhoc = useAdhocStore.getState().get(server.id);
+        if (sessionKind === "telnet") {
+          returnedId = await telnetConnect(
+            server.host,
+            server.port,
+            cols,
+            rows,
+            dataChannel,
+            logChannel,
+          );
+        } else if (sessionKind === "mosh") {
+          returnedId = await moshConnect(
+            server.id,
+            cols,
+            rows,
+            dataChannel,
+            logChannel,
+          );
+        } else {
+          returnedId = adhoc
+            ? await sshConnectAdhoc(
+                {
+                  host: server.host,
+                  port: server.port,
+                  username: server.username,
+                  authType: adhoc.authType,
+                  password: adhoc.password,
+                  keyPath: adhoc.keyPath,
+                  passphrase: adhoc.passphrase,
+                  cols,
+                  rows,
+                },
+                dataChannel,
+                logChannel,
+              )
+            : await sshConnect(
+                server.id,
+                clientId,
+                cols,
+                rows,
+                dataChannel,
+                logChannel,
+                kbdChannel,
+              );
+        }
 
         if (disposed) return;
+        if (!adhoc) vaultMarkConnected(server.id).catch(() => {});
 
         writeSpacer(term, disposedRef);
         writeLine(
           term,
           disposedRef,
-          `  ${C.green}\u2713${C.reset} ${C.bold}Connected${C.reset}  ${C.dim}session ${returnedId.slice(0, 8)}…${C.reset}`,
+          `  ${C.green}✓${C.reset} ${C.bold}Connected${C.reset}`,
         );
         writeSpacer(term, disposedRef);
 
         updateSession(sessionId, {
           status: "connected",
           backendId: returnedId,
+          kind: sessionKind,
+          latencyMs: Math.round(performance.now() - t0),
         });
 
-        if (!server.icon) {
+        if (!server.icon && sessionKind === "ssh") {
           sshDetectOS(returnedId)
             .then((osId) => {
               const slug = osReleaseIdToSlug(osId);
@@ -251,50 +514,71 @@ export function useTerminal({ sessionId, server }: UseTerminalOptions) {
             .catch(() => {});
         }
 
-        if (server.advanced?.startup_command) {
-          sshSendStartupCommand(returnedId, server.id).catch(() => {});
+        {
+          const { portForwardings } = useVaultStore.getState();
+          const auto = portForwardings.filter(
+            (r) => r.auto_start && r.server_id === server.id,
+          );
+          for (const r of auto) {
+            tunnelStart(returnedId, {
+              name: r.name,
+              kind: r.rule_type,
+              bind_host: r.local_host || "127.0.0.1",
+              bind_port: r.local_port,
+              target_host: r.remote_host,
+              target_port: r.remote_port,
+            }).catch(() => {});
+          }
         }
 
         term.onData((data: string) => {
           if (disposed) return;
-          sshWrite(
-            returnedId,
-            Array.from(new TextEncoder().encode(data)),
-          ).catch(() => {});
+          const bytes = Array.from(new TextEncoder().encode(data));
+          if (useUiStore.getState().broadcastInput) {
+            const targets = useSessionStore
+              .getState()
+              .sessions.filter((s) => s.status === "connected" && s.backendId);
+            for (const t of targets)
+              termKindWrite(t.kind, t.backendId!, bytes).catch(() => {});
+          } else {
+            termKindWrite(sessionKind, returnedId, bytes).catch(() => {});
+          }
         });
 
         term.onResize(({ cols, rows }) => {
           if (disposed) return;
-          sshResize(returnedId, cols, rows).catch(() => {});
+          termKindResize(sessionKind, returnedId, cols, rows).catch(() => {});
         });
 
         term.focus();
+        // Fallback: if the server sends nothing, still run the startup command.
+        if (server.advanced?.startup_command) {
+          setTimeout(maybeSendStartup, 2500);
+        }
       } catch (e) {
         if (disposed) return;
-
         const errMsg = String(e);
-
         writeSpacer(term, disposedRef);
-        writeLine(
-          term,
-          disposedRef,
-          `  ${C.red}\u2717 Connection failed${C.reset}`,
-        );
+        writeLine(term, disposedRef, `  ${C.red}✗ Connection failed${C.reset}`);
         writeLine(term, disposedRef, `  ${C.dim}${errMsg}${C.reset}`);
         writeSpacer(term, disposedRef);
-        writeLine(
-          term,
-          disposedRef,
-          `  ${C.dim}Press ${C.reset}${C.yellow}Ctrl+Shift+R${C.reset}${C.dim} or close and reconnect from the sidebar.${C.reset}`,
-        );
-        writeSpacer(term, disposedRef);
-
         updateSession(sessionId, { status: "error", error: errMsg });
-        addToast({
-          title: "Connection failed",
-          description: errMsg,
-          variant: "destructive",
-        });
+
+        const hk = errMsg.match(
+          /HOSTKEY_(UNKNOWN|MISMATCH) (\S+) (\S+)(?: (\S+))?/,
+        );
+        if (hk) {
+          handleHostKeyPrompt(hk, server, () => {
+            useSessionStore.getState().removeSession(sessionId);
+            connectServer(server);
+          });
+        } else {
+          addToast({
+            title: "Connection failed",
+            description: errMsg,
+            variant: "destructive",
+          });
+        }
       }
     }
 
@@ -302,9 +586,27 @@ export function useTerminal({ sessionId, server }: UseTerminalOptions) {
 
     return () => {
       disposed = true;
+      if (startupTimer) clearTimeout(startupTimer);
+      if (useKbdStore.getState().pending?.clientId === clientId) {
+        sshSubmitKbd(clientId, null).catch(() => {});
+        useKbdStore.getState().setPending(null);
+      }
+      container.removeEventListener("contextmenu", onContextMenu);
+      try {
+        const dump = serializeAddon.serialize({ scrollback: 2000 });
+        if (dump.trim())
+          localStorage.setItem(
+            SCROLLBACK_PREFIX + server.id,
+            dump.slice(-60000),
+          );
+      } catch {
+        /* ignore */
+      }
       term.dispose();
       termRef.current = null;
       fitAddonRef.current = null;
+      searchAddonRef.current = null;
+      serializeAddonRef.current = null;
     };
   }, [
     sessionId,
@@ -313,7 +615,15 @@ export function useTerminal({ sessionId, server }: UseTerminalOptions) {
     server.port,
     server.username,
     server.auth_type,
+    server.protocol,
   ]);
+
+  const themeKey = useUiStore((s) => s.theme);
+  useEffect(() => {
+    if (termRef.current) {
+      termRef.current.options.theme = terminalPalette(themeKey);
+    }
+  }, [themeKey]);
 
   useEffect(() => {
     window.addEventListener("resize", safeFit);
@@ -325,5 +635,5 @@ export function useTerminal({ sessionId, server }: UseTerminalOptions) {
     };
   }, [safeFit]);
 
-  return { containerRef, termRef, safeFit };
+  return { containerRef, termRef, safeFit, searchAddonRef, clearBuffer, zoom };
 }

@@ -1,5 +1,6 @@
 import { create } from "zustand";
 import type { ConnectionLog } from "@/lib/tauri";
+import { useAdhocStore } from "@/stores/adhoc-store";
 
 export interface Session {
   id: string;
@@ -9,6 +10,11 @@ export interface Session {
   status: "connecting" | "connected" | "disconnected" | "error";
   backendId?: string;
   error?: string;
+  title?: string;
+  latencyMs?: number;
+  kind?: "ssh" | "telnet" | "mosh" | "ftp";
+  paneOf?: string;
+  splitDir?: "h" | "v";
   logs: ConnectionLog[];
 }
 
@@ -37,7 +43,13 @@ export const useSessionStore = create<SessionStore>((set, get) => ({
 
   removeSession: (id: string) => {
     set((state) => {
-      const filtered = state.sessions.filter((s) => s.id !== id);
+      const closing = state.sessions.find((s) => s.id === id);
+      if (closing?.serverId?.startsWith("adhoc:")) {
+        useAdhocStore.getState().remove(closing.serverId);
+      }
+      const filtered = state.sessions.filter(
+        (s) => s.id !== id && s.paneOf !== id,
+      );
       const newActive =
         state.activeSessionId === id
           ? filtered.length > 0

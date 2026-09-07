@@ -2,7 +2,7 @@ import { useCallback } from "react";
 import { useSessionStore } from "@/stores/session-store";
 import { useVaultStore } from "@/stores/vault-store";
 import { useUiStore } from "@/stores/ui-store";
-import { sshDisconnect } from "@/lib/tauri";
+import { termKindClose } from "@/lib/tauri";
 
 export function useSshSession() {
   const { removeSession, sessions, activeSessionId } = useSessionStore();
@@ -28,8 +28,9 @@ export function useSshSession() {
 
   const disconnect = useCallback(
     async (sessionId: string) => {
+      const s = useSessionStore.getState().getSession(sessionId);
       try {
-        await sshDisconnect(sessionId);
+        if (s?.backendId) await termKindClose(s.kind, s.backendId);
       } catch {}
       removeSession(sessionId);
     },

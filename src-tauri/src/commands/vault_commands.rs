@@ -2,6 +2,7 @@ use std::path::PathBuf;
 use tauri::State;
 
 use crate::error::AppError;
+use crate::vault::crypto;
 use crate::vault::schema::*;
 use crate::vault::store::{self, SharedVaultState};
 
@@ -15,14 +16,15 @@ pub async fn vault_create(
         .map(PathBuf::from)
         .unwrap_or_else(store::default_vault_path);
 
-    let data = store::create_vault(&vault_path, &password)?;
+    let (data, kdf, key) = store::create_vault(&vault_path, &password)?;
 
     let mut vault = state
         .lock()
         .map_err(|_| AppError::Vault("Lock poisoned".into()))?;
     vault.data = Some(data);
     vault.file_path = Some(vault_path);
-    vault.password = Some(password);
+    vault.kdf = Some(kdf);
+    vault.key = Some(key);
 
     Ok(())
 }
@@ -37,14 +39,15 @@ pub async fn vault_open(
         .map(PathBuf::from)
         .unwrap_or_else(store::default_vault_path);
 
-    let data = store::open_vault(&vault_path, &password)?;
+    let (data, kdf, key) = store::open_vault(&vault_path, &password)?;
 
     let mut vault = state
         .lock()
         .map_err(|_| AppError::Vault("Lock poisoned".into()))?;
     vault.data = Some(data);
     vault.file_path = Some(vault_path);
-    vault.password = Some(password);
+    vault.kdf = Some(kdf);
+    vault.key = Some(key);
 
     Ok(())
 }
@@ -54,8 +57,7 @@ pub async fn vault_lock(state: State<'_, SharedVaultState>) -> Result<(), AppErr
     let mut vault = state
         .lock()
         .map_err(|_| AppError::Vault("Lock poisoned".into()))?;
-    vault.data = None;
-    vault.password = None;
+    vault.lock();
     Ok(())
 }
 
@@ -76,6 +78,106 @@ pub async fn vault_exists(path: Option<String>) -> Result<bool, AppError> {
 }
 
 #[tauri::command]
+pub async fn vault_reopen(
+    password: String,
+    state: State<'_, SharedVaultState>,
+) -> Result<(), AppError> {
+    let path = {
+        let vault = state
+            .lock()
+            .map_err(|_| AppError::Vault("Lock poisoned".into()))?;
+        vault
+            .file_path
+            .clone()
+            .ok_or_else(|| AppError::Vault("No vault file open".into()))?
+    };
+
+    let (data, kdf, key) = store::open_vault(&path, &password)?;
+
+    let mut vault = state
+        .lock()
+        .map_err(|_| AppError::Vault("Lock poisoned".into()))?;
+    vault.data = Some(data);
+    vault.kdf = Some(kdf);
+    vault.key = Some(key);
+    Ok(())
+}
+
+/// Applies a `<vault>.incoming` blob staged by `sync_pull`. The live vault file
+/// and in-memory state are only replaced once the blob decrypts with the given
+/// password; on any failure everything is left untouched.
+#[tauri::command]
+pub async fn vault_adopt_incoming(
+    password: String,
+    state: State<'_, SharedVaultState>,
+) -> Result<(), AppError> {
+    let path = {
+        let vault = state
+            .lock()
+            .map_err(|_| AppError::Vault("Lock poisoned".into()))?;
+        vault
+            .file_path
+            .clone()
+            .ok_or_else(|| AppError::Vault("No vault file open".into()))?
+    };
+    let incoming = path.with_extension("nyt.incoming");
+    if !incoming.exists() {
+        return Err(AppError::Vault("No pending synced changes".into()));
+    }
+
+    let raw = std::fs::read(&incoming)
+        .map_err(|e| AppError::Vault(format!("Cannot read staged vault: {}", e)))?;
+    let (plaintext, kdf, key) = crypto::decrypt(&raw, &password)?;
+    let data: VaultData = serde_json::from_slice(&plaintext)
+        .map_err(|e| AppError::Vault(format!("Staged vault is corrupt: {}", e)))?;
+
+    let backup = path.with_extension("nyt.bak");
+    let _ = std::fs::copy(&path, &backup);
+    std::fs::rename(&incoming, &path)
+        .map_err(|e| AppError::Vault(format!("Cannot replace vault file: {}", e)))?;
+
+    let mut vault = state
+        .lock()
+        .map_err(|_| AppError::Vault("Lock poisoned".into()))?;
+    vault.data = Some(data);
+    vault.kdf = Some(kdf);
+    vault.key = Some(key);
+    Ok(())
+}
+
+#[tauri::command]
+pub async fn vault_discard_incoming(state: State<'_, SharedVaultState>) -> Result<(), AppError> {
+    let path = {
+        let vault = state
+            .lock()
+            .map_err(|_| AppError::Vault("Lock poisoned".into()))?;
+        vault.file_path.clone()
+    };
+    if let Some(p) = path {
+        let _ = std::fs::remove_file(p.with_extension("nyt.incoming"));
+    }
+    Ok(())
+}
+
+#[tauri::command]
+pub async fn vault_default_path() -> Result<String, AppError> {
+    Ok(store::default_vault_path().to_string_lossy().to_string())
+}
+
+#[tauri::command]
+pub async fn vault_current_path(
+    state: State<'_, SharedVaultState>,
+) -> Result<Option<String>, AppError> {
+    let vault = state
+        .lock()
+        .map_err(|_| AppError::Vault("Lock poisoned".into()))?;
+    Ok(vault
+        .file_path
+        .as_ref()
+        .map(|p| p.to_string_lossy().to_string()))
+}
+
+#[tauri::command]
 pub async fn vault_change_password(
     current_password: String,
     new_password: String,
@@ -85,22 +187,31 @@ pub async fn vault_change_password(
         .lock()
         .map_err(|_| AppError::Vault("Lock poisoned".into()))?;
 
-    let stored_pw = vault
-        .password
-        .as_ref()
+    let kdf = vault
+        .kdf
+        .clone()
         .ok_or_else(|| AppError::Vault("Vault is locked".into()))?;
-    if *stored_pw != current_password {
+    let current_key = crypto::derive_key(&current_password, &kdf)?;
+    let stored_key = vault
+        .key
+        .clone()
+        .ok_or_else(|| AppError::Vault("Vault is locked".into()))?;
+    if !crypto::keys_equal(&current_key, &stored_key) {
         return Err(AppError::Vault("Current password is incorrect".into()));
     }
+
+    let new_kdf = crypto::Kdf::new_random();
+    let new_key = crypto::derive_key(&new_password, &new_kdf)?;
 
     let file_path = vault.file_path.clone();
     let data = vault.get_data()?;
 
     if let Some(path) = file_path {
-        store::save_vault(&path, &new_password, data)?;
+        store::save_vault(&path, &new_kdf, &new_key, data)?;
     }
 
-    vault.password = Some(new_password);
+    vault.kdf = Some(new_kdf);
+    vault.key = Some(new_key);
     Ok(())
 }
 
@@ -130,6 +241,7 @@ fn parse_auth(
                 .filter(|id| !id.is_empty())
                 .ok_or_else(|| AppError::Vault("Keychain ID required".into()))?,
         }),
+        "agent" => Ok(AuthMethod::Agent),
         "none" => Ok(AuthMethod::None),
         _ => Err(AppError::Vault(format!("Unknown auth type: {}", auth_type))),
     }
@@ -225,13 +337,14 @@ pub async fn vault_add_server(
         .lock()
         .map_err(|_| AppError::Vault("Lock poisoned".into()))?;
     let file_path = vault.file_path.clone();
-    let pw = vault.password.clone();
+    let kdf = vault.kdf.clone();
+    let key = vault.key.clone();
 
     let data = vault.get_data_mut()?;
     data.servers.push(entry);
 
-    if let (Some(path), Some(pw)) = (file_path, pw) {
-        store::save_vault(&path, &pw, data)?;
+    if let (Some(path), Some(kdf), Some(key)) = (file_path, kdf, key) {
+        store::save_vault(&path, &kdf, &key, data)?;
     }
 
     Ok(info)
@@ -258,13 +371,16 @@ pub async fn vault_update_server(
     tags: Option<Vec<String>>,
     advanced: Option<AdvancedOptions>,
     port_forwarding_ids: Option<Vec<String>>,
+    pinned: Option<bool>,
+    order: Option<i32>,
     state: State<'_, SharedVaultState>,
 ) -> Result<ServerInfo, AppError> {
     let mut vault = state
         .lock()
         .map_err(|_| AppError::Vault("Lock poisoned".into()))?;
     let file_path = vault.file_path.clone();
-    let pw = vault.password.clone();
+    let kdf = vault.kdf.clone();
+    let key = vault.key.clone();
 
     let data = vault.get_data_mut()?;
     let server = data
@@ -272,6 +388,13 @@ pub async fn vault_update_server(
         .iter_mut()
         .find(|s| s.id == id)
         .ok_or_else(|| AppError::Vault(format!("Server '{}' not found", id)))?;
+
+    if let Some(v) = pinned {
+        server.pinned = v;
+    }
+    if let Some(v) = order {
+        server.order = v;
+    }
 
     if let Some(n) = name {
         server.name = n;
@@ -326,8 +449,8 @@ pub async fn vault_update_server(
 
     let info = ServerInfo::from(&*server);
 
-    if let (Some(path), Some(pw)) = (file_path, pw) {
-        store::save_vault(&path, &pw, data)?;
+    if let (Some(path), Some(kdf), Some(key)) = (file_path, kdf, key) {
+        store::save_vault(&path, &kdf, &key, data)?;
     }
 
     Ok(info)
@@ -342,7 +465,8 @@ pub async fn vault_delete_server(
         .lock()
         .map_err(|_| AppError::Vault("Lock poisoned".into()))?;
     let file_path = vault.file_path.clone();
-    let pw = vault.password.clone();
+    let kdf = vault.kdf.clone();
+    let key = vault.key.clone();
 
     let data = vault.get_data_mut()?;
     let initial_len = data.servers.len();
@@ -351,8 +475,144 @@ pub async fn vault_delete_server(
         return Err(AppError::Vault(format!("Server '{}' not found", id)));
     }
 
-    if let (Some(path), Some(pw)) = (file_path, pw) {
-        store::save_vault(&path, &pw, data)?;
+    if let (Some(path), Some(kdf), Some(key)) = (file_path, kdf, key) {
+        store::save_vault(&path, &kdf, &key, data)?;
+    }
+    Ok(())
+}
+
+#[tauri::command]
+pub async fn vault_mark_connected(
+    id: String,
+    state: State<'_, SharedVaultState>,
+) -> Result<(), AppError> {
+    let mut vault = state
+        .lock()
+        .map_err(|_| AppError::Vault("Lock poisoned".into()))?;
+    let file_path = vault.file_path.clone();
+    let kdf = vault.kdf.clone();
+    let key = vault.key.clone();
+
+    let data = vault.get_data_mut()?;
+    if let Some(server) = data.servers.iter_mut().find(|s| s.id == id) {
+        server.last_connected = Some(timestamp_now());
+    }
+    if let (Some(path), Some(kdf), Some(key)) = (file_path, kdf, key) {
+        store::save_vault(&path, &kdf, &key, data)?;
+    }
+    Ok(())
+}
+
+#[tauri::command]
+pub async fn vault_duplicate_server(
+    id: String,
+    state: State<'_, SharedVaultState>,
+) -> Result<ServerInfo, AppError> {
+    let mut vault = state
+        .lock()
+        .map_err(|_| AppError::Vault("Lock poisoned".into()))?;
+    let file_path = vault.file_path.clone();
+    let kdf = vault.kdf.clone();
+    let key = vault.key.clone();
+
+    let data = vault.get_data_mut()?;
+    let src = data
+        .servers
+        .iter()
+        .find(|s| s.id == id)
+        .cloned()
+        .ok_or_else(|| AppError::Vault(format!("Server '{}' not found", id)))?;
+
+    let mut copy = src.clone();
+    copy.id = uuid::Uuid::new_v4().to_string();
+    copy.name = format!("{} (copy)", src.name);
+    copy.pinned = false;
+    copy.last_connected = None;
+    let now = timestamp_now();
+    copy.created_at = now.clone();
+    copy.updated_at = now;
+    let info = ServerInfo::from(&copy);
+    data.servers.push(copy);
+
+    if let (Some(path), Some(kdf), Some(key)) = (file_path, kdf, key) {
+        store::save_vault(&path, &kdf, &key, data)?;
+    }
+    Ok(info)
+}
+
+#[tauri::command]
+pub async fn vault_bulk_update_servers(
+    ids: Vec<String>,
+    group_id: Option<String>,
+    add_tags: Option<Vec<String>>,
+    remove_tags: Option<Vec<String>>,
+    delete: Option<bool>,
+    state: State<'_, SharedVaultState>,
+) -> Result<(), AppError> {
+    let mut vault = state
+        .lock()
+        .map_err(|_| AppError::Vault("Lock poisoned".into()))?;
+    let file_path = vault.file_path.clone();
+    let kdf = vault.kdf.clone();
+    let key = vault.key.clone();
+
+    let data = vault.get_data_mut()?;
+    let idset: std::collections::HashSet<&String> = ids.iter().collect();
+
+    if delete.unwrap_or(false) {
+        data.servers.retain(|s| !idset.contains(&s.id));
+    } else {
+        for server in data.servers.iter_mut().filter(|s| idset.contains(&s.id)) {
+            if let Some(g) = &group_id {
+                server.group_id = if g.is_empty() { None } else { Some(g.clone()) };
+            }
+            if let Some(add) = &add_tags {
+                for t in add {
+                    if !server.tags.contains(t) {
+                        server.tags.push(t.clone());
+                    }
+                }
+            }
+            if let Some(rem) = &remove_tags {
+                server.tags.retain(|t| !rem.contains(t));
+            }
+            server.updated_at = timestamp_now();
+        }
+    }
+
+    if let (Some(path), Some(kdf), Some(key)) = (file_path, kdf, key) {
+        store::save_vault(&path, &kdf, &key, data)?;
+    }
+    Ok(())
+}
+
+#[tauri::command]
+pub async fn vault_reorder_servers(
+    ordered_ids: Vec<String>,
+    state: State<'_, SharedVaultState>,
+) -> Result<(), AppError> {
+    let mut vault = state
+        .lock()
+        .map_err(|_| AppError::Vault("Lock poisoned".into()))?;
+    let file_path = vault.file_path.clone();
+    let kdf = vault.kdf.clone();
+    let key = vault.key.clone();
+
+    let data = vault.get_data_mut()?;
+    let pos: std::collections::HashMap<&String, usize> = ordered_ids
+        .iter()
+        .enumerate()
+        .map(|(i, id)| (id, i))
+        .collect();
+    for server in data.servers.iter_mut() {
+        if let Some(i) = pos.get(&server.id) {
+            server.order = *i as i32;
+            server.updated_at = timestamp_now();
+        }
+    }
+
+    if let (Some(path), Some(kdf), Some(key)) = (file_path, kdf, key) {
+        store::save_vault(&path, &kdf, &key, data)?;
     }
     Ok(())
 }
@@ -389,13 +649,14 @@ pub async fn vault_add_group(
         .lock()
         .map_err(|_| AppError::Vault("Lock poisoned".into()))?;
     let file_path = vault.file_path.clone();
-    let pw = vault.password.clone();
+    let kdf = vault.kdf.clone();
+    let key = vault.key.clone();
 
     let data = vault.get_data_mut()?;
     data.groups.push(group);
 
-    if let (Some(path), Some(pw)) = (file_path, pw) {
-        store::save_vault(&path, &pw, data)?;
+    if let (Some(path), Some(kdf), Some(key)) = (file_path, kdf, key) {
+        store::save_vault(&path, &kdf, &key, data)?;
     }
 
     Ok(result)
@@ -415,7 +676,8 @@ pub async fn vault_update_group(
         .lock()
         .map_err(|_| AppError::Vault("Lock poisoned".into()))?;
     let file_path = vault.file_path.clone();
-    let pw = vault.password.clone();
+    let kdf = vault.kdf.clone();
+    let key = vault.key.clone();
 
     let data = vault.get_data_mut()?;
     let group = data
@@ -442,8 +704,8 @@ pub async fn vault_update_group(
 
     let result = group.clone();
 
-    if let (Some(path), Some(pw)) = (file_path, pw) {
-        store::save_vault(&path, &pw, data)?;
+    if let (Some(path), Some(kdf), Some(key)) = (file_path, kdf, key) {
+        store::save_vault(&path, &kdf, &key, data)?;
     }
 
     Ok(result)
@@ -458,7 +720,8 @@ pub async fn vault_delete_group(
         .lock()
         .map_err(|_| AppError::Vault("Lock poisoned".into()))?;
     let file_path = vault.file_path.clone();
-    let pw = vault.password.clone();
+    let kdf = vault.kdf.clone();
+    let key = vault.key.clone();
 
     let data = vault.get_data_mut()?;
     let initial_len = data.groups.len();
@@ -479,8 +742,8 @@ pub async fn vault_delete_group(
         }
     }
 
-    if let (Some(path), Some(pw)) = (file_path, pw) {
-        store::save_vault(&path, &pw, data)?;
+    if let (Some(path), Some(kdf), Some(key)) = (file_path, kdf, key) {
+        store::save_vault(&path, &kdf, &key, data)?;
     }
 
     Ok(())
@@ -508,13 +771,14 @@ pub async fn vault_add_tag(
         .lock()
         .map_err(|_| AppError::Vault("Lock poisoned".into()))?;
     let file_path = vault.file_path.clone();
-    let pw = vault.password.clone();
+    let kdf = vault.kdf.clone();
+    let key = vault.key.clone();
 
     let data = vault.get_data_mut()?;
     data.tags.push(tag);
 
-    if let (Some(path), Some(pw)) = (file_path, pw) {
-        store::save_vault(&path, &pw, data)?;
+    if let (Some(path), Some(kdf), Some(key)) = (file_path, kdf, key) {
+        store::save_vault(&path, &kdf, &key, data)?;
     }
 
     Ok(result)
@@ -531,7 +795,8 @@ pub async fn vault_update_tag(
         .lock()
         .map_err(|_| AppError::Vault("Lock poisoned".into()))?;
     let file_path = vault.file_path.clone();
-    let pw = vault.password.clone();
+    let kdf = vault.kdf.clone();
+    let key = vault.key.clone();
 
     let data = vault.get_data_mut()?;
     let tag = data
@@ -549,8 +814,8 @@ pub async fn vault_update_tag(
 
     let result = tag.clone();
 
-    if let (Some(path), Some(pw)) = (file_path, pw) {
-        store::save_vault(&path, &pw, data)?;
+    if let (Some(path), Some(kdf), Some(key)) = (file_path, kdf, key) {
+        store::save_vault(&path, &kdf, &key, data)?;
     }
 
     Ok(result)
@@ -565,7 +830,8 @@ pub async fn vault_delete_tag(
         .lock()
         .map_err(|_| AppError::Vault("Lock poisoned".into()))?;
     let file_path = vault.file_path.clone();
-    let pw = vault.password.clone();
+    let kdf = vault.kdf.clone();
+    let key = vault.key.clone();
 
     let data = vault.get_data_mut()?;
     let initial_len = data.tags.len();
@@ -582,8 +848,8 @@ pub async fn vault_delete_tag(
         snippet.tags.retain(|t| t != &id);
     }
 
-    if let (Some(path), Some(pw)) = (file_path, pw) {
-        store::save_vault(&path, &pw, data)?;
+    if let (Some(path), Some(kdf), Some(key)) = (file_path, kdf, key) {
+        store::save_vault(&path, &kdf, &key, data)?;
     }
 
     Ok(())
@@ -606,10 +872,20 @@ pub async fn vault_add_snippet(
     content: String,
     description: Option<String>,
     tags: Option<Vec<String>>,
+    pinned: Option<bool>,
+    run_mode: Option<SnippetRunMode>,
+    confirm_before_run: Option<bool>,
+    shell: Option<String>,
+    os: Option<String>,
     state: State<'_, SharedVaultState>,
 ) -> Result<Snippet, AppError> {
     let mut snippet = Snippet::new(name, content, description);
     snippet.tags = tags.unwrap_or_default();
+    snippet.pinned = pinned.unwrap_or(false);
+    snippet.run_mode = run_mode.unwrap_or_default();
+    snippet.confirm_before_run = confirm_before_run.unwrap_or(false);
+    snippet.shell = shell.filter(|s| !s.is_empty());
+    snippet.os = os.filter(|s| !s.is_empty());
 
     let result = snippet.clone();
 
@@ -617,13 +893,14 @@ pub async fn vault_add_snippet(
         .lock()
         .map_err(|_| AppError::Vault("Lock poisoned".into()))?;
     let file_path = vault.file_path.clone();
-    let pw = vault.password.clone();
+    let kdf = vault.kdf.clone();
+    let key = vault.key.clone();
 
     let data = vault.get_data_mut()?;
     data.snippets.push(snippet);
 
-    if let (Some(path), Some(pw)) = (file_path, pw) {
-        store::save_vault(&path, &pw, data)?;
+    if let (Some(path), Some(kdf), Some(key)) = (file_path, kdf, key) {
+        store::save_vault(&path, &kdf, &key, data)?;
     }
 
     Ok(result)
@@ -636,13 +913,19 @@ pub async fn vault_update_snippet(
     content: Option<String>,
     description: Option<String>,
     tags: Option<Vec<String>>,
+    pinned: Option<bool>,
+    run_mode: Option<SnippetRunMode>,
+    confirm_before_run: Option<bool>,
+    shell: Option<String>,
+    os: Option<String>,
     state: State<'_, SharedVaultState>,
 ) -> Result<Snippet, AppError> {
     let mut vault = state
         .lock()
         .map_err(|_| AppError::Vault("Lock poisoned".into()))?;
     let file_path = vault.file_path.clone();
-    let pw = vault.password.clone();
+    let kdf = vault.kdf.clone();
+    let key = vault.key.clone();
 
     let data = vault.get_data_mut()?;
     let snippet = data
@@ -663,12 +946,27 @@ pub async fn vault_update_snippet(
     if let Some(t) = tags {
         snippet.tags = t;
     }
+    if let Some(v) = pinned {
+        snippet.pinned = v;
+    }
+    if let Some(v) = run_mode {
+        snippet.run_mode = v;
+    }
+    if let Some(v) = confirm_before_run {
+        snippet.confirm_before_run = v;
+    }
+    if let Some(v) = shell {
+        snippet.shell = if v.is_empty() { None } else { Some(v) };
+    }
+    if let Some(v) = os {
+        snippet.os = if v.is_empty() { None } else { Some(v) };
+    }
     snippet.updated_at = timestamp_now();
 
     let result = snippet.clone();
 
-    if let (Some(path), Some(pw)) = (file_path, pw) {
-        store::save_vault(&path, &pw, data)?;
+    if let (Some(path), Some(kdf), Some(key)) = (file_path, kdf, key) {
+        store::save_vault(&path, &kdf, &key, data)?;
     }
 
     Ok(result)
@@ -683,7 +981,8 @@ pub async fn vault_delete_snippet(
         .lock()
         .map_err(|_| AppError::Vault("Lock poisoned".into()))?;
     let file_path = vault.file_path.clone();
-    let pw = vault.password.clone();
+    let kdf = vault.kdf.clone();
+    let key = vault.key.clone();
 
     let data = vault.get_data_mut()?;
     let initial_len = data.snippets.len();
@@ -692,8 +991,33 @@ pub async fn vault_delete_snippet(
         return Err(AppError::Vault(format!("Snippet '{}' not found", id)));
     }
 
-    if let (Some(path), Some(pw)) = (file_path, pw) {
-        store::save_vault(&path, &pw, data)?;
+    if let (Some(path), Some(kdf), Some(key)) = (file_path, kdf, key) {
+        store::save_vault(&path, &kdf, &key, data)?;
+    }
+
+    Ok(())
+}
+
+#[tauri::command]
+pub async fn vault_touch_snippet(
+    id: String,
+    state: State<'_, SharedVaultState>,
+) -> Result<(), AppError> {
+    let mut vault = state
+        .lock()
+        .map_err(|_| AppError::Vault("Lock poisoned".into()))?;
+    let file_path = vault.file_path.clone();
+    let kdf = vault.kdf.clone();
+    let key = vault.key.clone();
+
+    let data = vault.get_data_mut()?;
+    if let Some(snippet) = data.snippets.iter_mut().find(|s| s.id == id) {
+        snippet.usage_count += 1;
+        snippet.last_used = Some(timestamp_now());
+    }
+
+    if let (Some(path), Some(kdf), Some(key)) = (file_path, kdf, key) {
+        store::save_vault(&path, &kdf, &key, data)?;
     }
 
     Ok(())
@@ -723,13 +1047,14 @@ pub async fn vault_add_keychain(
         .lock()
         .map_err(|_| AppError::Vault("Lock poisoned".into()))?;
     let file_path = vault.file_path.clone();
-    let pw = vault.password.clone();
+    let kdf = vault.kdf.clone();
+    let key = vault.key.clone();
 
     let data = vault.get_data_mut()?;
     data.keychains.push(entry);
 
-    if let (Some(path), Some(pw)) = (file_path, pw) {
-        store::save_vault(&path, &pw, data)?;
+    if let (Some(path), Some(kdf), Some(key)) = (file_path, kdf, key) {
+        store::save_vault(&path, &kdf, &key, data)?;
     }
 
     Ok(result)
@@ -746,7 +1071,8 @@ pub async fn vault_update_keychain(
         .lock()
         .map_err(|_| AppError::Vault("Lock poisoned".into()))?;
     let file_path = vault.file_path.clone();
-    let pw = vault.password.clone();
+    let kdf = vault.kdf.clone();
+    let key = vault.key.clone();
 
     let data = vault.get_data_mut()?;
     let entry = data
@@ -765,8 +1091,8 @@ pub async fn vault_update_keychain(
 
     let result = entry.clone();
 
-    if let (Some(path), Some(pw)) = (file_path, pw) {
-        store::save_vault(&path, &pw, data)?;
+    if let (Some(path), Some(kdf), Some(key)) = (file_path, kdf, key) {
+        store::save_vault(&path, &kdf, &key, data)?;
     }
 
     Ok(result)
@@ -781,7 +1107,8 @@ pub async fn vault_delete_keychain(
         .lock()
         .map_err(|_| AppError::Vault("Lock poisoned".into()))?;
     let file_path = vault.file_path.clone();
-    let pw = vault.password.clone();
+    let kdf = vault.kdf.clone();
+    let key = vault.key.clone();
 
     let data = vault.get_data_mut()?;
     let initial_len = data.keychains.len();
@@ -796,8 +1123,8 @@ pub async fn vault_delete_keychain(
         }
     }
 
-    if let (Some(path), Some(pw)) = (file_path, pw) {
-        store::save_vault(&path, &pw, data)?;
+    if let (Some(path), Some(kdf), Some(key)) = (file_path, kdf, key) {
+        store::save_vault(&path, &kdf, &key, data)?;
     }
 
     Ok(())
@@ -844,7 +1171,8 @@ pub async fn vault_add_port_forwarding(
         .lock()
         .map_err(|_| AppError::Vault("Lock poisoned".into()))?;
     let file_path = vault.file_path.clone();
-    let pw = vault.password.clone();
+    let kdf = vault.kdf.clone();
+    let key = vault.key.clone();
 
     let data = vault.get_data_mut()?;
     data.port_forwardings.push(rule);
@@ -857,8 +1185,8 @@ pub async fn vault_add_port_forwarding(
         }
     }
 
-    if let (Some(path), Some(pw)) = (file_path, pw) {
-        store::save_vault(&path, &pw, data)?;
+    if let (Some(path), Some(kdf), Some(key)) = (file_path, kdf, key) {
+        store::save_vault(&path, &kdf, &key, data)?;
     }
 
     Ok(result)
@@ -881,7 +1209,8 @@ pub async fn vault_update_port_forwarding(
         .lock()
         .map_err(|_| AppError::Vault("Lock poisoned".into()))?;
     let file_path = vault.file_path.clone();
-    let pw = vault.password.clone();
+    let kdf = vault.kdf.clone();
+    let key = vault.key.clone();
 
     let data = vault.get_data_mut()?;
     let rule = data
@@ -917,8 +1246,8 @@ pub async fn vault_update_port_forwarding(
 
     let result = rule.clone();
 
-    if let (Some(path), Some(pw)) = (file_path, pw) {
-        store::save_vault(&path, &pw, data)?;
+    if let (Some(path), Some(kdf), Some(key)) = (file_path, kdf, key) {
+        store::save_vault(&path, &kdf, &key, data)?;
     }
 
     Ok(result)
@@ -933,7 +1262,8 @@ pub async fn vault_delete_port_forwarding(
         .lock()
         .map_err(|_| AppError::Vault("Lock poisoned".into()))?;
     let file_path = vault.file_path.clone();
-    let pw = vault.password.clone();
+    let kdf = vault.kdf.clone();
+    let key = vault.key.clone();
 
     let data = vault.get_data_mut()?;
     let initial_len = data.port_forwardings.len();
@@ -949,8 +1279,8 @@ pub async fn vault_delete_port_forwarding(
         server.port_forwarding_ids.retain(|pid| pid != &id);
     }
 
-    if let (Some(path), Some(pw)) = (file_path, pw) {
-        store::save_vault(&path, &pw, data)?;
+    if let (Some(path), Some(kdf), Some(key)) = (file_path, kdf, key) {
+        store::save_vault(&path, &kdf, &key, data)?;
     }
 
     Ok(())
@@ -995,13 +1325,14 @@ pub async fn vault_add_known_host(
         .lock()
         .map_err(|_| AppError::Vault("Lock poisoned".into()))?;
     let file_path = vault.file_path.clone();
-    let pw = vault.password.clone();
+    let kdf = vault.kdf.clone();
+    let key = vault.key.clone();
 
     let data = vault.get_data_mut()?;
     data.known_hosts.push(entry);
 
-    if let (Some(path), Some(pw)) = (file_path, pw) {
-        store::save_vault(&path, &pw, data)?;
+    if let (Some(path), Some(kdf), Some(key)) = (file_path, kdf, key) {
+        store::save_vault(&path, &kdf, &key, data)?;
     }
 
     Ok(result)
@@ -1017,7 +1348,8 @@ pub async fn vault_delete_known_host(
         .lock()
         .map_err(|_| AppError::Vault("Lock poisoned".into()))?;
     let file_path = vault.file_path.clone();
-    let pw = vault.password.clone();
+    let kdf = vault.kdf.clone();
+    let key = vault.key.clone();
 
     let data = vault.get_data_mut()?;
     let initial_len = data.known_hosts.len();
@@ -1030,8 +1362,8 @@ pub async fn vault_delete_known_host(
         )));
     }
 
-    if let (Some(path), Some(pw)) = (file_path, pw) {
-        store::save_vault(&path, &pw, data)?;
+    if let (Some(path), Some(kdf), Some(key)) = (file_path, kdf, key) {
+        store::save_vault(&path, &kdf, &key, data)?;
     }
 
     Ok(())
@@ -1048,7 +1380,8 @@ pub async fn vault_trust_known_host(
         .lock()
         .map_err(|_| AppError::Vault("Lock poisoned".into()))?;
     let file_path = vault.file_path.clone();
-    let pw = vault.password.clone();
+    let kdf = vault.kdf.clone();
+    let key = vault.key.clone();
 
     let data = vault.get_data_mut()?;
     let entry = data
@@ -1060,8 +1393,8 @@ pub async fn vault_trust_known_host(
     entry.trusted = trusted;
     entry.last_seen = Some(timestamp_now());
 
-    if let (Some(path), Some(pw)) = (file_path, pw) {
-        store::save_vault(&path, &pw, data)?;
+    if let (Some(path), Some(kdf), Some(key)) = (file_path, kdf, key) {
+        store::save_vault(&path, &kdf, &key, data)?;
     }
 
     Ok(())
@@ -1075,7 +1408,13 @@ pub async fn vault_get_settings(
         .lock()
         .map_err(|_| AppError::Vault("Lock poisoned".into()))?;
     let data = vault.get_data()?;
-    Ok(data.settings.clone())
+    let mut s = data.settings.clone();
+    // Never hand the sync secret to the UI layer; a sentinel signals "is set".
+    s.sync_password = match s.sync_password.as_deref() {
+        Some(p) if !p.is_empty() => Some("__SET__".into()),
+        _ => None,
+    };
+    Ok(s)
 }
 
 #[tauri::command]
@@ -1089,13 +1428,22 @@ pub async fn vault_update_settings(
     log_retention_days: Option<u32>,
     confirm_on_disconnect: Option<bool>,
     confirm_on_delete: Option<bool>,
+    host_key_policy: Option<String>,
+    auto_lock_minutes: Option<u32>,
+    auto_reconnect: Option<bool>,
+    sync_mode: Option<String>,
+    sync_url: Option<String>,
+    sync_username: Option<String>,
+    sync_password: Option<String>,
+    sync_auto: Option<bool>,
     state: State<'_, SharedVaultState>,
 ) -> Result<VaultSettings, AppError> {
     let mut vault = state
         .lock()
         .map_err(|_| AppError::Vault("Lock poisoned".into()))?;
     let file_path = vault.file_path.clone();
-    let pw = vault.password.clone();
+    let kdf = vault.kdf.clone();
+    let key = vault.key.clone();
 
     let data = vault.get_data_mut()?;
     let s = &mut data.settings;
@@ -1127,11 +1475,42 @@ pub async fn vault_update_settings(
     if let Some(v) = confirm_on_delete {
         s.confirm_on_delete = v;
     }
+    if let Some(v) = host_key_policy {
+        s.host_key_policy = v;
+    }
+    if let Some(v) = auto_lock_minutes {
+        s.auto_lock_minutes = v;
+    }
+    if let Some(v) = auto_reconnect {
+        s.auto_reconnect = v;
+    }
+    if let Some(v) = sync_mode {
+        s.sync_mode = v;
+    }
+    if let Some(v) = sync_url {
+        s.sync_url = if v.is_empty() { None } else { Some(v) };
+    }
+    if let Some(v) = sync_username {
+        s.sync_username = if v.is_empty() { None } else { Some(v) };
+    }
+    if let Some(v) = sync_password {
+        // "__SET__" means "keep the stored value untouched".
+        if v != "__SET__" {
+            s.sync_password = if v.is_empty() { None } else { Some(v) };
+        }
+    }
+    if let Some(v) = sync_auto {
+        s.sync_auto = v;
+    }
 
-    let result = s.clone();
+    let mut result = s.clone();
+    result.sync_password = match result.sync_password.as_deref() {
+        Some(p) if !p.is_empty() => Some("__SET__".into()),
+        _ => None,
+    };
 
-    if let (Some(path), Some(pw)) = (file_path, pw) {
-        store::save_vault(&path, &pw, data)?;
+    if let (Some(path), Some(kdf), Some(key)) = (file_path, kdf, key) {
+        store::save_vault(&path, &kdf, &key, data)?;
     }
 
     Ok(result)

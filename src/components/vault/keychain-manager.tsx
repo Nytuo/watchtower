@@ -20,6 +20,7 @@ import {
   FileKey,
   ShieldCheck,
 } from "lucide-react";
+import { generateSshKey } from "@/lib/tauri";
 import type { CredentialType, KeychainEntry } from "@/lib/tauri";
 
 function credLabel(cred: CredentialType): string {
@@ -48,39 +49,6 @@ function credIcon(cred: CredentialType) {
     default:
       return <FileKey className="h-4 w-4" />;
   }
-}
-
-async function generateEd25519(): Promise<{
-  privateKey: string;
-  publicKey: string;
-}> {
-  const kp = await crypto.subtle.generateKey(
-    { name: "Ed25519" } as EcKeyGenParams,
-    true,
-    ["sign", "verify"],
-  );
-
-  const privPkcs8 = await crypto.subtle.exportKey("pkcs8", kp.privateKey);
-  const pubSpki = await crypto.subtle.exportKey("spki", kp.publicKey);
-
-  const toBase64 = (buf: ArrayBuffer) =>
-    btoa(String.fromCharCode(...new Uint8Array(buf)));
-
-  const privPem =
-    "-----BEGIN PRIVATE KEY-----\n" +
-    toBase64(privPkcs8)
-      .match(/.{1,64}/g)!
-      .join("\n") +
-    "\n-----END PRIVATE KEY-----";
-
-  const pubPem =
-    "-----BEGIN PUBLIC KEY-----\n" +
-    toBase64(pubSpki)
-      .match(/.{1,64}/g)!
-      .join("\n") +
-    "\n-----END PUBLIC KEY-----";
-
-  return { privateKey: privPem, publicKey: pubPem };
 }
 
 interface FormState {
@@ -244,14 +212,30 @@ export function KeychainManager() {
   const handleGenerate = useCallback(async () => {
     setGenerating(true);
     try {
-      const { privateKey, publicKey } = await generateEd25519();
-      setForm((f) => ({ ...f, keyType: "ed25519", privateKey, publicKey }));
-    } catch {
-      addToast({ title: "Key generation failed", variant: "destructive" });
+      const kt = form.keyType === "rsa" ? "rsa" : "ed25519";
+      const res = await generateSshKey({
+        keyType: kt,
+        bits: kt === "rsa" ? 4096 : undefined,
+        comment: form.name.trim() || undefined,
+        passphrase: form.passphrase || undefined,
+      });
+      setForm((f) => ({
+        ...f,
+        keyType: res.key_type,
+        privateKey: res.private_key,
+        publicKey: res.public_key,
+      }));
+      addToast({ title: "Key generated", description: res.fingerprint });
+    } catch (e) {
+      addToast({
+        title: "Key generation failed",
+        description: String(e),
+        variant: "destructive",
+      });
     } finally {
       setGenerating(false);
     }
-  }, [addToast]);
+  }, [addToast, form.keyType, form.name, form.passphrase]);
 
   const copyToClipboard = async (text: string, which: "pub" | "priv") => {
     await navigator.clipboard.writeText(text);
@@ -422,7 +406,8 @@ export function KeychainManager() {
                         { value: "ecdsa", label: "ECDSA P-256" },
                       ]}
                     />
-                    {form.keyType === "ed25519" && (
+                    {(form.keyType === "ed25519" ||
+                      form.keyType === "rsa") && (
                       <Button
                         type="button"
                         variant="outline"
@@ -445,7 +430,7 @@ export function KeychainManager() {
                     <Textarea
                       value={form.privateKey}
                       onChange={(e) => setField("privateKey", e.target.value)}
-                      placeholder="-----BEGIN PRIVATE KEY-----"
+                      placeholder="-----BEGIN OPENSSH PRIVATE KEY-----"
                       rows={4}
                       className="font-mono text-xs pr-8"
                       required

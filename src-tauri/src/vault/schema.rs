@@ -49,6 +49,13 @@ pub struct ServerEntry {
 
     pub keychain_id: Option<String>,
 
+    #[serde(default)]
+    pub pinned: bool,
+    #[serde(default)]
+    pub order: i32,
+    #[serde(default)]
+    pub last_connected: Option<String>,
+
     pub created_at: String,
     pub updated_at: String,
 }
@@ -79,6 +86,9 @@ impl ServerEntry {
             advanced: AdvancedOptions::default(),
             port_forwarding_ids: Vec::new(),
             keychain_id: None,
+            pinned: false,
+            order: 0,
+            last_connected: None,
             created_at: now.clone(),
             updated_at: now,
         }
@@ -108,12 +118,47 @@ pub struct AdvancedOptions {
     pub x11_forwarding: bool,
 
     pub compression: bool,
+
+    #[serde(default)]
+    pub transport: Transport,
+
+    #[serde(default)]
+    pub triggers: Vec<Trigger>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct Trigger {
+    pub pattern: String,
+    pub send: String,
+    #[serde(default)]
+    pub once: bool,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(tag = "type", rename_all = "lowercase")]
+pub enum Transport {
+    Direct,
+    Websocket {
+        url: String,
+        #[serde(default)]
+        host_header: Option<String>,
+    },
+    Command {
+        command: String,
+    },
+}
+
+impl Default for Transport {
+    fn default() -> Self {
+        Transport::Direct
+    }
 }
 
 impl Default for AdvancedOptions {
     fn default() -> Self {
         Self {
             agent_forwarding: false,
+            transport: Transport::Direct,
             startup_command: None,
             jump_hosts: Vec::new(),
             proxy: None,
@@ -125,6 +170,7 @@ impl Default for AdvancedOptions {
             keepalive_count_max: None,
             x11_forwarding: false,
             compression: false,
+            triggers: Vec::new(),
         }
     }
 }
@@ -177,6 +223,8 @@ pub enum AuthMethod {
     },
     #[serde(rename = "keychain")]
     Keychain { keychain_id: String },
+    #[serde(rename = "agent")]
+    Agent,
     #[serde(rename = "none")]
     None,
 }
@@ -241,6 +289,31 @@ pub struct Snippet {
     pub tags: Vec<String>,
     pub created_at: String,
     pub updated_at: String,
+
+    #[serde(default)]
+    pub pinned: bool,
+    #[serde(default)]
+    pub run_mode: SnippetRunMode,
+    #[serde(default)]
+    pub confirm_before_run: bool,
+    #[serde(default)]
+    pub shell: Option<String>,
+    #[serde(default)]
+    pub os: Option<String>,
+    #[serde(default)]
+    pub order: i32,
+    #[serde(default)]
+    pub usage_count: u64,
+    #[serde(default)]
+    pub last_used: Option<String>,
+}
+
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Default)]
+#[serde(rename_all = "lowercase")]
+pub enum SnippetRunMode {
+    #[default]
+    Paste,
+    Run,
 }
 
 impl Snippet {
@@ -254,6 +327,14 @@ impl Snippet {
             tags: Vec::new(),
             created_at: now.clone(),
             updated_at: now,
+            pinned: false,
+            run_mode: SnippetRunMode::Paste,
+            confirm_before_run: false,
+            shell: None,
+            os: None,
+            order: 0,
+            usage_count: 0,
+            last_used: None,
         }
     }
 }
@@ -450,6 +531,59 @@ pub struct VaultSettings {
     pub log_retention_days: u32,
     pub confirm_on_disconnect: bool,
     pub confirm_on_delete: bool,
+
+    #[serde(default = "default_host_key_policy")]
+    pub host_key_policy: String,
+
+    #[serde(default = "default_auto_lock_minutes")]
+    pub auto_lock_minutes: u32,
+
+    #[serde(default = "default_true")]
+    pub auto_reconnect: bool,
+
+    #[serde(default = "default_sync_mode")]
+    pub sync_mode: String,
+    #[serde(default)]
+    pub sync_url: Option<String>,
+    #[serde(default)]
+    pub sync_username: Option<String>,
+    #[serde(default)]
+    pub sync_password: Option<String>,
+    #[serde(default = "default_true")]
+    pub sync_auto: bool,
+}
+
+fn default_sync_mode() -> String {
+    "off".into()
+}
+
+fn default_host_key_policy() -> String {
+    "accept-new".into()
+}
+
+fn default_auto_lock_minutes() -> u32 {
+    15
+}
+
+fn default_true() -> bool {
+    true
+}
+
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub enum HostKeyPolicy {
+    Strict,
+    AcceptNew,
+    Off,
+}
+
+impl HostKeyPolicy {
+    pub fn parse(s: &str) -> Self {
+        match s {
+            "strict" => HostKeyPolicy::Strict,
+            "off" => HostKeyPolicy::Off,
+            _ => HostKeyPolicy::AcceptNew,
+        }
+    }
 }
 
 impl Default for VaultSettings {
@@ -464,6 +598,14 @@ impl Default for VaultSettings {
             log_retention_days: 30,
             confirm_on_disconnect: true,
             confirm_on_delete: true,
+            host_key_policy: default_host_key_policy(),
+            auto_lock_minutes: default_auto_lock_minutes(),
+            auto_reconnect: true,
+            sync_mode: default_sync_mode(),
+            sync_url: None,
+            sync_username: None,
+            sync_password: None,
+            sync_auto: true,
         }
     }
 }
@@ -485,6 +627,9 @@ pub struct ServerInfo {
     pub advanced: AdvancedOptions,
     pub port_forwarding_ids: Vec<String>,
     pub keychain_id: Option<String>,
+    pub pinned: bool,
+    pub order: i32,
+    pub last_connected: Option<String>,
 }
 
 impl From<&ServerEntry> for ServerInfo {
@@ -494,6 +639,7 @@ impl From<&ServerEntry> for ServerInfo {
             AuthMethod::Key { .. } => "key",
             AuthMethod::KeyFile { .. } => "key_file",
             AuthMethod::Keychain { .. } => "keychain",
+            AuthMethod::Agent => "agent",
             AuthMethod::None => "none",
         };
         let protocol = match &entry.protocol {
@@ -520,6 +666,9 @@ impl From<&ServerEntry> for ServerInfo {
             advanced: entry.advanced.clone(),
             port_forwarding_ids: entry.port_forwarding_ids.clone(),
             keychain_id: entry.keychain_id.clone(),
+            pinned: entry.pinned,
+            order: entry.order,
+            last_connected: entry.last_connected.clone(),
         }
     }
 }

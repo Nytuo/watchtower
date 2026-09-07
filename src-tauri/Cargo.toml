@@ -30,9 +30,38 @@ futures = "0.3"
 argon2 = "0.5"
 chacha20poly1305 = { version = "0.10", features = ["std"] }
 rand = "0.8"
+zeroize = { version = "1", features = ["derive"] }
+keyring = { version = "3", features = ["apple-native", "windows-native", "linux-native"] }
 
 # SSH
 russh = "0.46"
 russh-keys = "0.46"
 russh-sftp = "2.1.1"
+ssh-key = { version = "0.6", features = ["ed25519", "rsa", "rand_core", "encryption", "std"] }
 async-trait = "0.1"
+
+# WebSocket transport (SSH-over-WSS)
+tokio-tungstenite = { version = "0.24", features = ["rustls-tls-webpki-roots"] }
+futures-util = "0.3"
+bytes = "1"
+data-encoding = "2"
+
+# Sync / cloud import
+reqwest = { version = "0.12", default-features = false, features = ["rustls-tls", "json"] }
+sha2 = "0.10"
+hmac = "0.12"
+tauri-plugin-deep-link = "2"
+
+# Telnet / Mosh / FTP
+portable-pty = "0.8"
+suppaftp = { version = "6", default-features = false, features = ["rustls"] }
+rustls = "0.23"
+webpki-roots = "0.26"
+
+[[bin]]
+name = "wt"
+path = "src/bin/wt.rs"
+
+[[bin]]
+name = "watchtower"
+path = "src/main.rs"

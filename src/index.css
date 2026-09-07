@@ -56,11 +56,11 @@
   background: transparent;
 }
 ::-webkit-scrollbar-thumb {
-  background: hsl(0 0% 25%);
+  background: var(--color-border);
   border-radius: 4px;
 }
 ::-webkit-scrollbar-thumb:hover {
-  background: hsl(0 0% 35%);
+  background: var(--color-muted-foreground);
 }
 
 /* xterm.js overrides */
@@ -71,6 +71,6 @@
   width: 8px;
 }
 .xterm-viewport::-webkit-scrollbar-thumb {
-  background: hsl(0 0% 25%);
+  background: var(--color-border);
   border-radius: 4px;
 }

@@ -1,4 +1,4 @@
-import React, { useState } from "react";
+import React, { useEffect, useState } from "react";
 import { useVaultStore } from "@/stores/vault-store";
 import { useUiStore } from "@/stores/ui-store";
 import { Button } from "@/components/ui/button";
@@ -18,13 +18,25 @@ const COLORS = [
 
 export function GroupManager() {
   const { groups, addGroup, updateGroup, deleteGroup } = useVaultStore();
-  const { addToast } = useUiStore();
+  const { addToast, newGroupParent, setNewGroupParent } = useUiStore();
   const [editing, setEditing] = useState<string | null>(null);
   const [name, setName] = useState("");
   const [color, setColor] = useState("");
   const [icon, setIcon] = useState("");
   const [parentId, setParentId] = useState("");
   const [showForm, setShowForm] = useState(false);
+
+  useEffect(() => {
+    if (newGroupParent) {
+      setEditing(null);
+      setName("");
+      setColor("");
+      setIcon("");
+      setParentId(newGroupParent);
+      setShowForm(true);
+      setNewGroupParent(null);
+    }
+  }, [newGroupParent, setNewGroupParent]);
 
   const resetForm = () => {
     setName("");

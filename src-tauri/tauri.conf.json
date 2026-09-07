@@ -27,6 +27,13 @@
       "csp": null
     }
   },
+  "plugins": {
+    "deep-link": {
+      "desktop": {
+        "schemes": ["ssh", "watchtower"]
+      }
+    }
+  },
   "bundle": {
     "active": true,
     "targets": "all",

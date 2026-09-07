@@ -1,4 +1,5 @@
 import { create } from "zustand";
+import { applyTheme, readStoredTheme, storeTheme } from "@/lib/themes";
 
 type Panel =
   | "groups"
@@ -7,9 +8,10 @@ type Panel =
   | "keychains"
   | "port-forwarding"
   | "known-hosts"
+  | "import"
   | "settings"
   | null;
-export type ActiveView = "home" | "terminal" | "sftp";
+export type ActiveView = "home" | "terminal" | "sftp" | "ftp";
 
 interface UiStore {
   sidebarOpen: boolean;
@@ -30,6 +32,18 @@ interface UiStore {
   activePanel: Panel;
   setActivePanel: (panel: Panel) => void;
 
+  showCommandPalette: boolean;
+  setShowCommandPalette: (show: boolean) => void;
+
+  broadcastInput: boolean;
+  setBroadcastInput: (on: boolean) => void;
+
+  showShortcuts: boolean;
+  setShowShortcuts: (show: boolean) => void;
+
+  newGroupParent: string | null;
+  setNewGroupParent: (id: string | null) => void;
+
   editingGroupId: string | null;
   editingTagId: string | null;
   editingSnippetId: string | null;
@@ -41,8 +55,8 @@ interface UiStore {
   setEditingKeychainId: (id: string | null) => void;
   setEditingPortForwardingId: (id: string | null) => void;
 
-  theme: "dark" | "light";
-  setTheme: (theme: "dark" | "light") => void;
+  theme: string;
+  setTheme: (theme: string) => void;
 
   toasts: Toast[];
   addToast: (toast: Omit<Toast, "id">) => string;
@@ -81,6 +95,18 @@ export const useUiStore = create<UiStore>((set) => ({
   activePanel: null,
   setActivePanel: (panel) => set({ activePanel: panel }),
 
+  showCommandPalette: false,
+  setShowCommandPalette: (show) => set({ showCommandPalette: show }),
+
+  broadcastInput: false,
+  setBroadcastInput: (on) => set({ broadcastInput: on }),
+
+  showShortcuts: false,
+  setShowShortcuts: (show) => set({ showShortcuts: show }),
+
+  newGroupParent: null,
+  setNewGroupParent: (id) => set({ newGroupParent: id }),
+
   editingGroupId: null,
   editingTagId: null,
   editingSnippetId: null,
@@ -92,15 +118,19 @@ export const useUiStore = create<UiStore>((set) => ({
   setEditingKeychainId: (id) => set({ editingKeychainId: id }),
   setEditingPortForwardingId: (id) => set({ editingPortForwardingId: id }),
 
-  theme: "dark",
-  setTheme: (theme: "dark" | "light") => set({ theme }),
+  theme: readStoredTheme(),
+  setTheme: (theme: string) => {
+    applyTheme(theme);
+    storeTheme(theme);
+    set({ theme });
+  },
 
   toasts: [],
   addToast: (toast) => {
     const id = String(++toastId);
     set((state) => ({ toasts: [...state.toasts, { ...toast, id }] }));
 
-    if (toast.progress === undefined) {
+    if (toast.progress === undefined && toast.variant !== "destructive") {
       setTimeout(() => {
         set((state) => ({
           toasts: state.toasts.filter((t) => t.id !== id),

@@ -4,7 +4,14 @@ import {
   save as saveFileDialog,
 } from "@tauri-apps/plugin-dialog";
 import { useVaultStore } from "@/stores/vault-store";
-import { vaultExists } from "@/lib/tauri";
+import {
+  vaultExists,
+  vaultDefaultPath,
+  biometricAvailable,
+  biometricHas,
+  biometricStore,
+  biometricRetrieve,
+} from "@/lib/tauri";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
@@ -17,24 +24,36 @@ import {
   EyeOff,
   ArrowLeft,
   ChevronRight,
+  Fingerprint,
 } from "lucide-react";
 
 type Mode = "choose" | "unlock" | "create" | "open-file";
 
 const RECENT_VAULT_KEY = "watchtower:recent_vault_path";
+const RECENT_VAULTS_KEY = "watchtower:recent_vaults";
 
-function getRecentPath(): string | null {
+function getRecentPaths(): string[] {
   try {
-    return localStorage.getItem(RECENT_VAULT_KEY);
+    const arr = JSON.parse(localStorage.getItem(RECENT_VAULTS_KEY) || "[]");
+    if (Array.isArray(arr) && arr.length) return arr.slice(0, 6);
+    const single = localStorage.getItem(RECENT_VAULT_KEY);
+    return single ? [single] : [];
   } catch {
-    return null;
+    return [];
   }
 }
 
 function setRecentPath(path: string) {
   try {
     localStorage.setItem(RECENT_VAULT_KEY, path);
-  } catch {}
+    const list = [path, ...getRecentPaths().filter((p) => p !== path)].slice(
+      0,
+      6,
+    );
+    localStorage.setItem(RECENT_VAULTS_KEY, JSON.stringify(list));
+  } catch {
+    /* ignore */
+  }
 }
 
 export function VaultPage() {
@@ -55,7 +74,46 @@ export function VaultPage() {
   const [selectedPath, setSelectedPath] = useState<string | null>(null);
   const [pathVaultExists, setPathVaultExists] = useState<boolean | null>(null);
   const [createPath, setCreatePath] = useState<string | null>(null);
-  const recentPath = getRecentPath();
+  const [remember, setRemember] = useState(false);
+  const [bioPath, setBioPath] = useState<string | null>(null);
+  const [bioHasEntry, setBioHasEntry] = useState(false);
+  const recentPaths = getRecentPaths();
+  const recentPath = recentPaths[0] ?? null;
+
+  useEffect(() => {
+    let cancelled = false;
+    (async () => {
+      let p: string | null = null;
+      if (mode === "unlock") {
+        p = await vaultDefaultPath().catch(() => null);
+      } else if (mode === "open-file") {
+        p = selectedPath;
+      }
+      if (cancelled) return;
+      setBioPath(p);
+      if (p && (await biometricAvailable(p).catch(() => false))) {
+        const has = await biometricHas(p).catch(() => false);
+        if (!cancelled) setBioHasEntry(has);
+      } else if (!cancelled) {
+        setBioHasEntry(false);
+      }
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, [mode, selectedPath]);
+
+  const handleBiometricUnlock = async () => {
+    if (!bioPath) return;
+    clearError();
+    try {
+      const pw = await biometricRetrieve(bioPath);
+      if (!pw) return;
+      await openVault(pw, mode === "unlock" ? undefined : bioPath);
+    } catch {
+      /* store surfaces the error */
+    }
+  };
 
   useEffect(() => {
     setMode(hasDefaultVault ? "unlock" : "choose");
@@ -115,13 +173,24 @@ export function VaultPage() {
     e.preventDefault();
     clearError();
 
-    if (mode === "create") {
-      await createVault(password, createPath ?? undefined);
-    } else if (mode === "unlock") {
-      await openVault(password);
-    } else if (mode === "open-file" && selectedPath) {
-      await openVault(password, selectedPath);
-      setRecentPath(selectedPath);
+    try {
+      if (mode === "create") {
+        await createVault(password, createPath ?? undefined);
+        if (createPath) setRecentPath(createPath);
+        if (remember && createPath)
+          await biometricStore(createPath, password).catch(() => {});
+      } else if (mode === "unlock") {
+        await openVault(password);
+        if (remember && bioPath)
+          await biometricStore(bioPath, password).catch(() => {});
+      } else if (mode === "open-file" && selectedPath) {
+        await openVault(password, selectedPath);
+        setRecentPath(selectedPath);
+        if (remember)
+          await biometricStore(selectedPath, password).catch(() => {});
+      }
+    } catch {
+      /* store surfaces the error */
     }
     setPassword("");
     setConfirmPassword("");
@@ -168,21 +237,22 @@ export function VaultPage() {
             }}
           />
 
-          {recentPath && (
+          {recentPaths.length > 0 && (
             <>
               <div className="border-t border-border my-1" />
               <p className="text-xs text-muted-foreground px-1">Recent</p>
-              <ChoiceButton
-                icon={<Lock className="h-4 w-4" />}
-                label={recentPath.split(/[/\\]/).pop() ?? recentPath}
-                description={recentPath}
-                onClick={() => {
-                  setSelectedPath(recentPath);
-                  reset("open-file");
-
-                  setTimeout(() => setSelectedPath(recentPath), 0);
-                }}
-              />
+              {recentPaths.map((rp) => (
+                <ChoiceButton
+                  key={rp}
+                  icon={<Lock className="h-4 w-4" />}
+                  label={rp.split(/[/\\]/).pop() ?? rp}
+                  description={rp}
+                  onClick={() => {
+                    reset("open-file");
+                    setTimeout(() => setSelectedPath(rp), 0);
+                  }}
+                />
+              ))}
             </>
           )}
         </div>
@@ -279,6 +349,19 @@ export function VaultPage() {
           onSubmit={handleSubmit}
           className="space-y-5 w-full max-w-xs mx-auto"
         >
+          {bioHasEntry && (
+            <Button
+              type="button"
+              variant="outline"
+              className="w-full"
+              onClick={handleBiometricUnlock}
+              disabled={loading}
+            >
+              <Fingerprint className="mr-2 h-4 w-4" />
+              Unlock with system keychain
+            </Button>
+          )}
+
           <PasswordField
             id="ul-password"
             label="Master Password"
@@ -288,6 +371,18 @@ export function VaultPage() {
             onToggleShow={() => setShowPassword((v) => !v)}
             autoFocus
           />
+
+          {!bioHasEntry && (
+            <label className="flex items-center gap-2 text-xs text-muted-foreground">
+              <input
+                type="checkbox"
+                checked={remember}
+                onChange={(e) => setRemember(e.target.checked)}
+                className="rounded border-border"
+              />
+              Remember on this device (system keychain)
+            </label>
+          )}
 
           {error && <ErrorBox message={error} />}
 

@@ -1,6 +1,7 @@
 import React from "react";
 import { useVaultStore } from "@/stores/vault-store";
 import { useUiStore } from "@/stores/ui-store";
+import { useT } from "@/lib/i18n";
 import {
   Server,
   Plus,
@@ -12,20 +13,22 @@ import {
   ArrowRightLeft,
   Fingerprint,
   Settings,
+  DownloadCloud,
 } from "lucide-react";
 
 const panelButtons = [
-  { panel: "groups" as const, icon: FolderOpen, label: "Groups" },
-  { panel: "tags" as const, icon: Tags, label: "Tags" },
-  { panel: "snippets" as const, icon: Code2, label: "Snippets" },
-  { panel: "keychains" as const, icon: KeyRound, label: "Keys" },
+  { panel: "groups" as const, icon: FolderOpen, k: "nav.groups" },
+  { panel: "tags" as const, icon: Tags, k: "nav.tags" },
+  { panel: "snippets" as const, icon: Code2, k: "nav.snippets" },
+  { panel: "keychains" as const, icon: KeyRound, k: "nav.keychains" },
   {
     panel: "port-forwarding" as const,
     icon: ArrowRightLeft,
-    label: "Forwarding",
+    k: "nav.portForwarding",
   },
-  { panel: "known-hosts" as const, icon: Fingerprint, label: "Known Hosts" },
-  { panel: "settings" as const, icon: Settings, label: "Settings" },
+  { panel: "known-hosts" as const, icon: Fingerprint, k: "nav.knownHosts" },
+  { panel: "import" as const, icon: DownloadCloud, k: "nav.import" },
+  { panel: "settings" as const, icon: Settings, k: "nav.settings" },
 ] as const;
 
 export function Sidebar() {
@@ -38,13 +41,15 @@ export function Sidebar() {
     setActiveView,
   } = useUiStore();
 
+  const tr = useT();
+
   if (!isUnlocked) return null;
 
   return (
     <div className="flex h-full w-[68px] shrink-0 flex-col items-center border-r border-border bg-sidebar py-2 gap-1">
       <NavItem
         icon={<Server className="h-4 w-4" />}
-        label="Servers"
+        label={tr("nav.servers")}
         active={activeView === "home" && activePanel === null}
         onClick={() => {
           setActivePanel(null);
@@ -54,11 +59,11 @@ export function Sidebar() {
 
       <div className="w-7 h-px bg-border my-1" />
 
-      {panelButtons.map(({ panel, icon: Icon, label }) => (
+      {panelButtons.map(({ panel, icon: Icon, k }) => (
         <NavItem
           key={panel}
           icon={<Icon className="h-4 w-4" />}
-          label={label}
+          label={tr(k)}
           active={activePanel === panel}
           onClick={() => setActivePanel(activePanel === panel ? null : panel)}
         />

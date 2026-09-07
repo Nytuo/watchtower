@@ -1,16 +1,17 @@
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 use std::sync::Mutex;
 
+use zeroize::Zeroizing;
+
 use crate::error::{AppError, AppResult};
-use crate::vault::crypto;
+use crate::vault::crypto::{self, Kdf};
 use crate::vault::schema::VaultData;
 
 pub struct VaultState {
     pub data: Option<VaultData>,
-
     pub file_path: Option<PathBuf>,
-
-    pub password: Option<String>,
+    pub kdf: Option<Kdf>,
+    pub key: Option<Zeroizing<[u8; 32]>>,
 }
 
 impl VaultState {
@@ -18,12 +19,19 @@ impl VaultState {
         Self {
             data: None,
             file_path: None,
-            password: None,
+            kdf: None,
+            key: None,
         }
     }
 
     pub fn is_unlocked(&self) -> bool {
         self.data.is_some()
+    }
+
+    pub fn lock(&mut self) {
+        self.data = None;
+        self.kdf = None;
+        self.key = None;
     }
 
     pub fn get_data(&self) -> AppResult<&VaultData> {
@@ -41,27 +49,33 @@ impl VaultState {
 
 pub type SharedVaultState = Mutex<VaultState>;
 
-pub fn create_vault(path: &PathBuf, password: &str) -> AppResult<VaultData> {
+pub fn create_vault(
+    path: &Path,
+    password: &str,
+) -> AppResult<(VaultData, Kdf, Zeroizing<[u8; 32]>)> {
+    let kdf = Kdf::new_random();
+    let key = crypto::derive_key(password, &kdf)?;
     let data = VaultData::default();
-    save_vault(path, password, &data)?;
-    Ok(data)
+    save_vault(path, &kdf, &key, &data)?;
+    Ok((data, kdf, key))
 }
 
-pub fn open_vault(path: &PathBuf, password: &str) -> AppResult<VaultData> {
+pub fn open_vault(path: &Path, password: &str) -> AppResult<(VaultData, Kdf, Zeroizing<[u8; 32]>)> {
     let raw = std::fs::read(path)
         .map_err(|e| AppError::Vault(format!("Cannot read vault file: {}", e)))?;
 
-    let plaintext = crypto::decrypt(&raw, password)?;
+    let (plaintext, kdf, key) = crypto::decrypt(&raw, password)?;
+    let plaintext = Zeroizing::new(plaintext);
 
     let data: VaultData = serde_json::from_slice(&plaintext)
         .map_err(|e| AppError::Vault(format!("Corrupt vault data: {}", e)))?;
 
-    Ok(data)
+    Ok((data, kdf, key))
 }
 
-pub fn save_vault(path: &PathBuf, password: &str, data: &VaultData) -> AppResult<()> {
-    let json = serde_json::to_vec(data)?;
-    let encrypted = crypto::encrypt(&json, password)?;
+pub fn save_vault(path: &Path, kdf: &Kdf, key: &[u8; 32], data: &VaultData) -> AppResult<()> {
+    let json = Zeroizing::new(serde_json::to_vec(data)?);
+    let encrypted = crypto::encrypt(&json, kdf, key)?;
 
     let tmp_path = path.with_extension("nyt.tmp");
     std::fs::write(&tmp_path, &encrypted)?;

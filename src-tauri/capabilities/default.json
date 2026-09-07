@@ -8,13 +8,23 @@
     "dialog:default",
     "fs:default",
     "shell:default",
+    "shell:allow-open",
     "store:default",
+    "deep-link:default",
     "core:event:default",
     "core:window:default",
     "core:window:allow-set-title",
     "core:window:allow-close",
     "core:window:allow-minimize",
     "core:window:allow-maximize",
-    "core:window:allow-set-size"
+    "core:window:allow-set-size",
+    {
+      "identifier": "fs:allow-stat",
+      "allow": [{ "path": "$TEMP/**" }, { "path": "$TEMP/watchtower-edit/**" }]
+    },
+    {
+      "identifier": "fs:allow-mkdir",
+      "allow": [{ "path": "$TEMP/**" }, { "path": "$TEMP/watchtower-edit/**" }]
+    }
   ]
 }
