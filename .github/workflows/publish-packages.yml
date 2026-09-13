@@ -1,0 +1,162 @@
+name: 'publish-packages'
+
+# Runs once a GitHub Release is published (not on draft creation — build.yml
+# creates the release as a draft; publishing it is the manual review gate).
+# Pushes the new version out to the third-party package managers that pull
+# from GitHub Release assets. Flathub is intentionally not included here:
+# it builds from source under its own review process, not from these
+# binaries — see packaging/flatpak/README.md.
+#
+# Required repo secrets (none of these exist yet — add before relying on
+# this workflow; each job below no-ops with a clear log message if its
+# secret is missing):
+#   HOMEBREW_TAP_TOKEN  - PAT with `repo` scope on Nytuo/homebrew-apps
+#   WINGET_TOKEN        - PAT with `public_repo` scope, used by wingetcreate
+#                         to open a PR against microsoft/winget-pkgs
+#   CHOCO_API_KEY       - API key from your chocolatey.org account
+
+on:
+  release:
+    types: [published]
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: 'Release tag to publish from (defaults to the latest release)'
+        required: false
+        type: string
+
+jobs:
+  resolve:
+    runs-on: ubuntu-latest
+    outputs:
+      tag: ${{ steps.tag.outputs.tag }}
+      version: ${{ steps.tag.outputs.version }}
+    steps:
+      - id: tag
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          TAG="${{ github.event.inputs.tag }}"
+          if [ -z "$TAG" ]; then
+            TAG="${{ github.event.release.tag_name }}"
+          fi
+          if [ -z "$TAG" ]; then
+            TAG=$(gh release list --repo "$GITHUB_REPOSITORY" --limit 1 --json tagName -q '.[0].tagName')
+          fi
+          VERSION="${TAG#v}"
+          VERSION="${VERSION#watchtower-v}"
+          echo "tag=$TAG" >> "$GITHUB_OUTPUT"
+          echo "version=$VERSION" >> "$GITHUB_OUTPUT"
+
+  homebrew:
+    needs: resolve
+    runs-on: ubuntu-latest
+    steps:
+      - name: Check secret
+        id: check
+        run: echo "has=${{ secrets.HOMEBREW_TAP_TOKEN != '' }}" >> "$GITHUB_OUTPUT"
+      - name: Skip (no HOMEBREW_TAP_TOKEN)
+        if: steps.check.outputs.has != 'true'
+        run: echo "::notice::HOMEBREW_TAP_TOKEN not set — skipping Homebrew cask update."
+      - uses: actions/checkout@v4
+        if: steps.check.outputs.has == 'true'
+        with:
+          repository: Nytuo/homebrew-apps
+          token: ${{ secrets.HOMEBREW_TAP_TOKEN }}
+          path: tap
+      - name: Update cask
+        if: steps.check.outputs.has == 'true'
+        env:
+          VERSION: ${{ needs.resolve.outputs.version }}
+          TAG: ${{ needs.resolve.outputs.tag }}
+        run: |
+          ARM_URL="https://github.com/Nytuo/watchtower/releases/download/${TAG}/Watchtower_${VERSION}_aarch64.dmg"
+          INTEL_URL="https://github.com/Nytuo/watchtower/releases/download/${TAG}/Watchtower_${VERSION}_x64.dmg"
+          ARM_SHA=$(curl -fsSL "$ARM_URL" | sha256sum | cut -d' ' -f1)
+          INTEL_SHA=$(curl -fsSL "$INTEL_URL" | sha256sum | cut -d' ' -f1)
+          # The URL is repointed at this release's tag too, so a cask still
+          # pinned to an older tag scheme follows along.
+          sed -i \
+            -e "s|^  version \".*\"|  version \"${VERSION}\"|" \
+            -e "s|/releases/download/[^/]*/|/releases/download/${TAG}/|" \
+            -e "s|arm:   \"[a-f0-9]*\"|arm:   \"${ARM_SHA}\"|" \
+            -e "s|intel: \"[a-f0-9]*\"|intel: \"${INTEL_SHA}\"|" \
+            tap/Casks/watchtower.rb
+      - name: Commit + push
+        if: steps.check.outputs.has == 'true'
+        working-directory: tap
+        run: |
+          git config user.name "watchtower-bot"
+          git config user.email "actions@users.noreply.github.com"
+          git add Casks/watchtower.rb
+          git diff --cached --quiet && echo "No changes" && exit 0
+          git commit -m "watchtower ${{ needs.resolve.outputs.version }}"
+          git push
+
+  winget:
+    needs: resolve
+    runs-on: windows-latest
+    steps:
+      - name: Check secret
+        id: check
+        shell: bash
+        run: echo "has=${{ secrets.WINGET_TOKEN != '' }}" >> "$GITHUB_OUTPUT"
+      - name: Skip (no WINGET_TOKEN)
+        if: steps.check.outputs.has != 'true'
+        run: echo "::notice::WINGET_TOKEN not set — skipping winget submission."
+      - name: Install wingetcreate
+        if: steps.check.outputs.has == 'true'
+        run: |
+          iwr https://aka.ms/wingetcreate/latest -OutFile wingetcreate.exe
+      - name: Submit update
+        if: steps.check.outputs.has == 'true'
+        env:
+          VERSION: ${{ needs.resolve.outputs.version }}
+          TAG: ${{ needs.resolve.outputs.tag }}
+        run: |
+          $url = "https://github.com/Nytuo/watchtower/releases/download/$env:TAG/Watchtower_${env:VERSION}_x64-setup.exe"
+          .\wingetcreate.exe update Nytuo.Watchtower `
+            --version $env:VERSION `
+            --urls $url `
+            --token ${{ secrets.WINGET_TOKEN }} `
+            --submit
+
+  chocolatey:
+    needs: resolve
+    runs-on: windows-latest
+    steps:
+      - name: Check secret
+        id: check
+        shell: bash
+        run: echo "has=${{ secrets.CHOCO_API_KEY != '' }}" >> "$GITHUB_OUTPUT"
+      - name: Skip (no CHOCO_API_KEY)
+        if: steps.check.outputs.has != 'true'
+        run: echo "::notice::CHOCO_API_KEY not set — skipping Chocolatey push."
+      - uses: actions/checkout@v4
+        if: steps.check.outputs.has == 'true'
+      - name: Update nuspec + install script
+        if: steps.check.outputs.has == 'true'
+        shell: pwsh
+        env:
+          VERSION: ${{ needs.resolve.outputs.version }}
+          TAG: ${{ needs.resolve.outputs.tag }}
+        run: |
+          $url = "https://github.com/Nytuo/watchtower/releases/download/$env:TAG/Watchtower_${env:VERSION}_x64-setup.exe"
+          $sha = (Invoke-WebRequest -Uri $url -OutFile "installer.exe" -PassThru) | Out-Null
+          $checksum = (Get-FileHash installer.exe -Algorithm SHA256).Hash.ToLower()
+
+          (Get-Content packaging/choco/watchtower.nuspec) `
+            -replace '<version>.*</version>', "<version>$env:VERSION</version>" |
+            Set-Content packaging/choco/watchtower.nuspec
+
+          (Get-Content packaging/choco/tools/chocolateyInstall.ps1) `
+            -replace "url64bit\s*=\s*'.*'", "url64bit       = '$url'" `
+            -replace "checksum64\s*=\s*'[a-f0-9]*'", "checksum64     = '$checksum'" |
+            Set-Content packaging/choco/tools/chocolateyInstall.ps1
+
+      - name: Pack and push
+        if: steps.check.outputs.has == 'true'
+        working-directory: packaging/choco
+        run: |
+          choco pack
+          choco push watchtower.$env:VERSION.nupkg --source https://push.chocolatey.org/ --api-key ${{ secrets.CHOCO_API_KEY }}
