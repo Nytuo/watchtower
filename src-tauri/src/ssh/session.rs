@@ -311,15 +311,14 @@ async fn keyboard_interactive_with_password(
     Ok(false)
 }
 
-async fn agent_authenticate(handle: &mut Handle<SshHandler>, username: &str) -> AppResult<()> {
-    let mut agent = russh_keys::agent::client::AgentClient::connect_env()
-        .await
-        .map_err(|e| {
-            AppError::Ssh(format!(
-                "Cannot reach SSH agent (is SSH_AUTH_SOCK set?): {}",
-                e
-            ))
-        })?;
+async fn run_agent_auth<S>(
+    mut agent: russh_keys::agent::client::AgentClient<S>,
+    handle: &mut Handle<SshHandler>,
+    username: &str,
+) -> AppResult<()>
+where
+    S: russh_keys::agent::client::AgentStream + Unpin + Send + 'static,
+{
     let identities = agent
         .request_identities()
         .await
@@ -338,6 +337,31 @@ async fn agent_authenticate(handle: &mut Handle<SshHandler>, username: &str) -> 
         }
     }
     Err(AppError::Ssh("SSH agent authentication rejected".into()))
+}
+
+#[cfg(unix)]
+async fn agent_authenticate(handle: &mut Handle<SshHandler>, username: &str) -> AppResult<()> {
+    let agent = russh_keys::agent::client::AgentClient::connect_env()
+        .await
+        .map_err(|e| {
+            AppError::Ssh(format!(
+                "Cannot reach SSH agent (is SSH_AUTH_SOCK set?): {}",
+                e
+            ))
+        })?;
+    run_agent_auth(agent, handle, username).await
+}
+
+#[cfg(windows)]
+async fn agent_authenticate(handle: &mut Handle<SshHandler>, username: &str) -> AppResult<()> {
+    if let Ok(agent) =
+        russh_keys::agent::client::AgentClient::connect_named_pipe(r"\\.\pipe\openssh-ssh-agent")
+            .await
+    {
+        return run_agent_auth(agent, handle, username).await;
+    }
+    let agent = russh_keys::agent::client::AgentClient::connect_pageant().await;
+    run_agent_auth(agent, handle, username).await
 }
 
 fn host_key_error(outcome: HostKeyOutcome) -> Option<AppError> {
