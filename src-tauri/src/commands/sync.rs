@@ -190,7 +190,7 @@ pub async fn sync_pull(state: State<'_, SharedVaultState>) -> Result<SyncPullRes
         .ok_or_else(|| AppError::General("Remote vault does not exist yet — push first".into()))?;
 
     if hash_bytes(&remote) == local_hash {
-        let _ = std::fs::remove_file(path.with_extension("nyt.incoming"));
+        let _ = std::fs::remove_file(path.with_extension("watchtower.incoming"));
         return Ok(SyncPullResult { pending: false });
     }
     if remote.len() < 5 || &remote[0..4] != VAULT_MAGIC {
@@ -199,7 +199,7 @@ pub async fn sync_pull(state: State<'_, SharedVaultState>) -> Result<SyncPullRes
         ));
     }
 
-    std::fs::write(path.with_extension("nyt.incoming"), &remote)
+    crate::vault::store::write_private(&path.with_extension("watchtower.incoming"), &remote)
         .map_err(|e| AppError::General(format!("Cannot stage synced vault: {}", e)))?;
     Ok(SyncPullResult { pending: true })
 }

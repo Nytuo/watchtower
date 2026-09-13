@@ -132,10 +132,6 @@ function SessionView({
           </button>
         </div>
       )}
-      {/*
-        TerminalView handles the SSH connection.
-        It must be present for the session to stay alive and connected.
-      */}
       {!isFtpProto && (
         <div
           className={
@@ -178,6 +174,7 @@ function SessionView({
         <SftpView
           sessionId={session.id}
           backendId={session.backendId}
+          serverId={server.id}
           serverName={server.name}
           active={active && isSftp}
         />

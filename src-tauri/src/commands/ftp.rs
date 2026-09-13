@@ -78,6 +78,7 @@ pub async fn ftp_connect(
     secure: bool,
     ftp: State<'_, SharedFtp>,
 ) -> Result<String, AppError> {
+    tracing::info!(%host, port, secure, "ftp connect requested");
     let id = uuid::Uuid::new_v4().to_string();
     let conn = tokio::task::spawn_blocking(move || -> Result<Conn, AppError> {
         if secure {
@@ -100,8 +101,10 @@ pub async fn ftp_connect(
         }
     })
     .await
-    .map_err(|e| AppError::General(format!("FTP task failed: {}", e)))??;
+    .map_err(|e| AppError::General(format!("FTP task failed: {}", e)))?
+    .inspect_err(|e| tracing::error!(error = %e, "ftp connect failed"))?;
 
+    tracing::info!(%id, "ftp connected");
     ftp.lock()
         .await
         .insert(id.clone(), Arc::new(std::sync::Mutex::new(conn)));

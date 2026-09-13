@@ -28,6 +28,7 @@ interface SessionStore {
   updateSession: (id: string, updates: Partial<Omit<Session, "id">>) => void;
   getSession: (id: string) => Session | undefined;
   addSessionLog: (id: string, log: ConnectionLog) => void;
+  clearAll: () => void;
 }
 
 export const useSessionStore = create<SessionStore>((set, get) => ({
@@ -82,5 +83,9 @@ export const useSessionStore = create<SessionStore>((set, get) => ({
         s.id === id ? { ...s, logs: [...s.logs, log] } : s,
       ),
     }));
+  },
+
+  clearAll: () => {
+    set({ sessions: [], activeSessionId: null });
   },
 }));

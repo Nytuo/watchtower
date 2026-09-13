@@ -1,0 +1,46 @@
+app-id: fr.nytuo.watchtower
+runtime: org.gnome.Platform
+runtime-version: '47'
+sdk: org.gnome.Sdk
+sdk-extensions:
+  - org.freedesktop.Sdk.Extension.rust-stable
+  - org.freedesktop.Sdk.Extension.node20
+
+command: watchtower
+
+finish-args:
+  - --socket=wayland
+  - --socket=fallback-x11
+  - --share=ipc
+  - --device=dri
+  - --share=network        # SSH/SFTP/FTP connections are the whole point of the app
+  - --socket=ssh-auth      # let it use the host's ssh-agent for key auth
+  - --filesystem=home      # browsing to arbitrary local files (SFTP, key files, snippets)
+  - --talk-name=org.freedesktop.secrets  # system keychain / Secret Service, for "remember password"
+
+build-options:
+  append-path: /usr/lib/sdk/rust-stable/bin:/usr/lib/sdk/node20/bin
+  env:
+    CARGO_HOME: /run/build/watchtower/cargo
+    npm_config_cache: /run/build/watchtower/npm-cache
+
+modules:
+  - name: watchtower
+    buildsystem: simple
+    build-options:
+      build-args:
+        - --share=network   # local/dev builds only — Flathub submission needs
+                             # this replaced by vendored cargo+npm sources (see
+                             # packaging/flatpak/README.md)
+    build-commands:
+      - npm ci
+      - npm run build
+      - cargo build --release --jobs 4 --manifest-path src-tauri/Cargo.toml
+      - install -Dm755 src-tauri/target/release/watchtower /app/bin/watchtower
+      - install -Dm644 packaging/flatpak/fr.nytuo.watchtower.desktop /app/share/applications/fr.nytuo.watchtower.desktop
+      - install -Dm644 packaging/flatpak/fr.nytuo.watchtower.metainfo.xml /app/share/metainfo/fr.nytuo.watchtower.metainfo.xml
+      - install -Dm644 src-tauri/icons/128x128.png /app/share/icons/hicolor/128x128/apps/fr.nytuo.watchtower.png
+      - install -Dm644 src-tauri/icons/128x128@2x.png /app/share/icons/hicolor/256x256/apps/fr.nytuo.watchtower.png
+    sources:
+      - type: dir
+        path: ../..

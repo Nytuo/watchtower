@@ -61,15 +61,21 @@ pub fn create_vault(
 }
 
 pub fn open_vault(path: &Path, password: &str) -> AppResult<(VaultData, Kdf, Zeroizing<[u8; 32]>)> {
-    let raw = std::fs::read(path)
-        .map_err(|e| AppError::Vault(format!("Cannot read vault file: {}", e)))?;
+    tracing::info!(path = %path.display(), "opening vault");
+    let raw = std::fs::read(path).map_err(|e| {
+        tracing::error!(path = %path.display(), error = %e, "cannot read vault file");
+        AppError::Vault(format!("Cannot read vault file: {}", e))
+    })?;
 
-    let (plaintext, kdf, key) = crypto::decrypt(&raw, password)?;
+    let (plaintext, kdf, key) = crypto::decrypt(&raw, password).inspect_err(|e| {
+        tracing::warn!(path = %path.display(), error = %e, "vault decrypt failed");
+    })?;
     let plaintext = Zeroizing::new(plaintext);
 
     let data: VaultData = serde_json::from_slice(&plaintext)
         .map_err(|e| AppError::Vault(format!("Corrupt vault data: {}", e)))?;
 
+    tracing::info!(servers = data.servers.len(), "vault opened");
     Ok((data, kdf, key))
 }
 
@@ -77,19 +83,48 @@ pub fn save_vault(path: &Path, kdf: &Kdf, key: &[u8; 32], data: &VaultData) -> A
     let json = Zeroizing::new(serde_json::to_vec(data)?);
     let encrypted = crypto::encrypt(&json, kdf, key)?;
 
-    let tmp_path = path.with_extension("nyt.tmp");
-    std::fs::write(&tmp_path, &encrypted)?;
+    let tmp_path = path.with_extension("watchtower.tmp");
+    write_private(&tmp_path, &encrypted)?;
     std::fs::rename(&tmp_path, path)?;
 
+    tracing::debug!(path = %path.display(), servers = data.servers.len(), "vault saved");
+    Ok(())
+}
+
+#[cfg(unix)]
+pub fn write_private(path: &Path, contents: &[u8]) -> AppResult<()> {
+    use std::io::Write;
+    use std::os::unix::fs::OpenOptionsExt;
+    let mut f = std::fs::OpenOptions::new()
+        .write(true)
+        .create(true)
+        .truncate(true)
+        .mode(0o600)
+        .open(path)?;
+    f.write_all(contents)?;
+    Ok(())
+}
+
+#[cfg(not(unix))]
+pub fn write_private(path: &Path, contents: &[u8]) -> AppResult<()> {
+    std::fs::write(path, contents)?;
     Ok(())
 }
 
 pub fn default_vault_path() -> PathBuf {
-    let mut path = dirs_default();
-    path.push("watchtower");
-    std::fs::create_dir_all(&path).ok();
-    path.push("default.nyt");
-    path
+    let mut dir = dirs_default();
+    dir.push("watchtower");
+    std::fs::create_dir_all(&dir).ok();
+
+    let current = dir.join("default.watchtower");
+    if current.exists() {
+        return current;
+    }
+    let legacy = dir.join("default.nyt");
+    if legacy.exists() {
+        return legacy;
+    }
+    current
 }
 
 fn dirs_default() -> PathBuf {

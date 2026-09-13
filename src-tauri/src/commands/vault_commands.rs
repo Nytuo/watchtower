@@ -1,7 +1,9 @@
 use std::path::PathBuf;
 use tauri::State;
 
+use crate::commands::mount;
 use crate::error::AppError;
+use crate::ssh::session::SharedSessionManager;
 use crate::vault::crypto;
 use crate::vault::schema::*;
 use crate::vault::store::{self, SharedVaultState};
@@ -53,7 +55,14 @@ pub async fn vault_open(
 }
 
 #[tauri::command]
-pub async fn vault_lock(state: State<'_, SharedVaultState>) -> Result<(), AppError> {
+pub async fn vault_lock(
+    state: State<'_, SharedVaultState>,
+    session_state: State<'_, SharedSessionManager>,
+    mounts: State<'_, mount::SharedMounts>,
+) -> Result<(), AppError> {
+    session_state.lock().await.close_all().await;
+    mount::unmount_all(&mounts).await;
+
     let mut vault = state
         .lock()
         .map_err(|_| AppError::Vault("Lock poisoned".into()))?;
@@ -103,9 +112,6 @@ pub async fn vault_reopen(
     Ok(())
 }
 
-/// Applies a `<vault>.incoming` blob staged by `sync_pull`. The live vault file
-/// and in-memory state are only replaced once the blob decrypts with the given
-/// password; on any failure everything is left untouched.
 #[tauri::command]
 pub async fn vault_adopt_incoming(
     password: String,
@@ -120,7 +126,7 @@ pub async fn vault_adopt_incoming(
             .clone()
             .ok_or_else(|| AppError::Vault("No vault file open".into()))?
     };
-    let incoming = path.with_extension("nyt.incoming");
+    let incoming = path.with_extension("watchtower.incoming");
     if !incoming.exists() {
         return Err(AppError::Vault("No pending synced changes".into()));
     }
@@ -131,7 +137,7 @@ pub async fn vault_adopt_incoming(
     let data: VaultData = serde_json::from_slice(&plaintext)
         .map_err(|e| AppError::Vault(format!("Staged vault is corrupt: {}", e)))?;
 
-    let backup = path.with_extension("nyt.bak");
+    let backup = path.with_extension("watchtower.bak");
     let _ = std::fs::copy(&path, &backup);
     std::fs::rename(&incoming, &path)
         .map_err(|e| AppError::Vault(format!("Cannot replace vault file: {}", e)))?;
@@ -154,7 +160,7 @@ pub async fn vault_discard_incoming(state: State<'_, SharedVaultState>) -> Resul
         vault.file_path.clone()
     };
     if let Some(p) = path {
-        let _ = std::fs::remove_file(p.with_extension("nyt.incoming"));
+        let _ = std::fs::remove_file(p.with_extension("watchtower.incoming"));
     }
     Ok(())
 }

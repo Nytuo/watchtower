@@ -4,6 +4,7 @@ pub mod ftp;
 pub mod import_export;
 pub mod keygen;
 pub mod local_fs;
+pub mod mount;
 pub mod sftp_commands;
 pub mod ssh_commands;
 pub mod sync;

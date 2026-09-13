@@ -5,6 +5,7 @@ import { useSessionStore } from "@/stores/session-store";
 import { runSnippet } from "@/stores/snippet-run-store";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
+import { Checkbox } from "@/components/ui/checkbox";
 import { Label } from "@/components/ui/label";
 import { Select } from "@/components/ui/select";
 import { Textarea } from "@/components/ui/textarea";
@@ -356,11 +357,11 @@ export function SnippetsPanel() {
                 </div>
               </div>
               <label className="flex items-center gap-2 text-sm">
-                <input
-                  type="checkbox"
+                <Checkbox
                   checked={confirmBeforeRun}
-                  onChange={(e) => setConfirmBeforeRun(e.target.checked)}
-                  className="rounded border-border"
+                  onCheckedChange={(checked) =>
+                    setConfirmBeforeRun(checked === true)
+                  }
                 />
                 Always confirm before running
               </label>

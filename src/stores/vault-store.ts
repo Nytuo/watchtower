@@ -51,9 +51,12 @@ import {
   type VaultSettings,
 } from "@/lib/tauri";
 import { useUiStore } from "@/stores/ui-store";
+import { useSessionStore } from "@/stores/session-store";
+import { useMountStore } from "@/stores/mount-store";
 
 interface VaultStore {
   isUnlocked: boolean;
+  hasUnlockedOnce: boolean;
   vaultExists: boolean;
   servers: ServerInfo[];
   groups: ServerGroup[];
@@ -192,6 +195,7 @@ interface VaultStore {
 
 const INITIAL_STATE = {
   isUnlocked: false,
+  hasUnlockedOnce: false,
   vaultExists: false,
   servers: [] as ServerInfo[],
   groups: [] as ServerGroup[],
@@ -221,7 +225,12 @@ export const useVaultStore = create<VaultStore>((set, get) => ({
     set({ loading: true, error: null });
     try {
       await vaultCreate(password, path);
-      set({ isUnlocked: true, vaultExists: true, loading: false });
+      set({
+        isUnlocked: true,
+        vaultExists: true,
+        loading: false,
+        hasUnlockedOnce: true,
+      });
       await get().refreshAll();
     } catch (e) {
       set({ loading: false, error: String(e) });
@@ -233,7 +242,7 @@ export const useVaultStore = create<VaultStore>((set, get) => ({
     set({ loading: true, error: null });
     try {
       await vaultOpen(password, path);
-      set({ isUnlocked: true, loading: false });
+      set({ isUnlocked: true, loading: false, hasUnlockedOnce: true });
       await get().refreshAll();
     } catch (e) {
       set({ loading: false, error: String(e) });
@@ -244,6 +253,8 @@ export const useVaultStore = create<VaultStore>((set, get) => ({
   lockVault: async () => {
     try {
       await vaultLock();
+      useSessionStore.getState().clearAll();
+      useMountStore.getState().clearAll();
       set({
         isUnlocked: false,
         servers: [],

@@ -6,8 +6,11 @@ import { useUiStore } from "@/stores/ui-store";
 import { getOSIcon } from "@/components/icons/os-icons";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
+import { Checkbox } from "@/components/ui/checkbox";
 import { Select } from "@/components/ui/select";
 import { connectServer, connectAdhoc } from "@/lib/connect";
+import { useMountStore } from "@/stores/mount-store";
+import { open as openPath } from "@tauri-apps/plugin-shell";
 import { confirmDialog } from "@/stores/dialog-store";
 import { parseTarget } from "@/stores/adhoc-store";
 import {
@@ -23,6 +26,7 @@ import {
   CheckSquare,
   Zap,
   ClipboardCopy,
+  HardDrive,
 } from "lucide-react";
 
 function sshCommand(s: ServerInfo): string {
@@ -652,6 +656,52 @@ function ServerCard({
   const isFocused = focusedId === server.id;
   const ref = useRef<HTMLDivElement>(null);
 
+  const mounts = useMountStore((s) => s.mounts);
+  const mountBusyIds = useMountStore((s) => s.busyIds);
+  const mountBusy = mountBusyIds.has(server.id);
+  const mountAction = useMountStore((s) => s.mount);
+  const unmountAction = useMountStore((s) => s.unmount);
+  const activeMount = mounts.find((m) => m.server_id === server.id);
+  const mountable = !["ftp", "ftps", "telnet", "mosh"].includes(
+    server.protocol,
+  );
+
+  const toggleMount = async () => {
+    setContextMenu(null);
+    if (activeMount) {
+      try {
+        await unmountAction(activeMount.id);
+        useUiStore
+          .getState()
+          .addToast({ title: "Unmounted", description: activeMount.mount_point });
+      } catch (e) {
+        useUiStore.getState().addToast({
+          title: "Unmount failed",
+          description: String(e),
+          variant: "destructive",
+        });
+      }
+      return;
+    }
+    useUiStore.getState().addToast({
+      title: "Mounting…",
+      description: `${server.name} — this can take up to 25s`,
+    });
+    try {
+      const info = await mountAction(server.id);
+      useUiStore
+        .getState()
+        .addToast({ title: "Mounted as drive", description: info.mount_point });
+      openPath(info.mount_point).catch(() => {});
+    } catch (e) {
+      useUiStore.getState().addToast({
+        title: "Mount failed",
+        description: String(e),
+        variant: "destructive",
+      });
+    }
+  };
+
   useEffect(() => {
     if (isFocused) ref.current?.scrollIntoView({ block: "nearest" });
   }, [isFocused]);
@@ -702,18 +752,17 @@ function ServerCard({
       )}
 
       <div className="flex items-start gap-2 pl-1">
-        {selectMode && (
-          <input
-            type="checkbox"
-            checked={isSel}
-            readOnly
-            className="mt-1 rounded border-border"
-          />
-        )}
+        {selectMode && <Checkbox checked={isSel} className="mt-1" />}
         <div className="relative shrink-0">
           <OSIcon size={20} className="mt-0.5" />
           {live && (
             <span className="absolute -right-0.5 -top-0.5 h-2 w-2 rounded-full bg-green-500 ring-2 ring-card" />
+          )}
+          {mountBusy && (
+            <span
+              title="Mounting…"
+              className="absolute -right-1 -bottom-1 h-2.5 w-2.5 animate-spin rounded-full border-2 border-primary border-t-transparent ring-2 ring-card"
+            />
           )}
         </div>
         <div className="min-w-0 flex-1">
@@ -811,6 +860,19 @@ function ServerCard({
               setContextMenu(null);
             }}
           />
+          {mountable && (
+            <MenuItem
+              icon={<HardDrive className="h-3.5 w-3.5" />}
+              label={
+                mountBusy
+                  ? "Mounting…"
+                  : activeMount
+                    ? "Unmount drive"
+                    : "Mount as drive"
+              }
+              onClick={toggleMount}
+            />
+          )}
           <div className="my-1 h-px bg-border" />
           <MenuItem
             icon={<Trash2 className="h-3.5 w-3.5" />}

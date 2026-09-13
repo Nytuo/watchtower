@@ -24,7 +24,7 @@
       }
     ],
     "security": {
-      "csp": null
+      "csp": "default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' data: asset: https://asset.localhost; font-src 'self' data:; connect-src 'self' ipc: http://ipc.localhost https://api.github.com; object-src 'none'; base-uri 'self'; form-action 'none'"
     }
   },
   "plugins": {
@@ -32,6 +32,9 @@
       "desktop": {
         "schemes": ["ssh", "watchtower"]
       }
+    },
+    "shell": {
+      "open": "^(https?://|mailto:|tel:|[a-zA-Z]:\\\\|\\\\\\\\|/).+"
     }
   },
   "bundle": {

@@ -68,7 +68,7 @@ export function useSync() {
           const ok = await confirmDialog({
             title: "Remote vault differs",
             message:
-              "The synced copy has changes not in this vault. Pull them now? A backup of the current file is kept as .nyt.bak.",
+              "The synced copy has changes not in this vault. Pull them now? A backup of the current file is kept as .watchtower.bak.",
             confirmLabel: "Pull",
           });
           if (ok) await pullAndReload();

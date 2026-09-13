@@ -4,6 +4,7 @@ import { useUiStore } from "@/stores/ui-store";
 import { useSessionStore } from "@/stores/session-store";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
+import { Checkbox } from "@/components/ui/checkbox";
 import { Label } from "@/components/ui/label";
 import { Select } from "@/components/ui/select";
 import {
@@ -382,11 +383,9 @@ export function PortForwardingPanel() {
                 </div>
               )}
               <label className="flex items-center gap-2 text-sm">
-                <input
-                  type="checkbox"
+                <Checkbox
                   checked={autoStart}
-                  onChange={(e) => setAutoStart(e.target.checked)}
-                  className="rounded border-border"
+                  onCheckedChange={(checked) => setAutoStart(checked === true)}
                 />
                 Auto-start when session connects
               </label>

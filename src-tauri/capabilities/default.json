@@ -25,6 +25,14 @@
     {
       "identifier": "fs:allow-mkdir",
       "allow": [{ "path": "$TEMP/**" }, { "path": "$TEMP/watchtower-edit/**" }]
+    },
+    {
+      "identifier": "fs:allow-read-dir",
+      "allow": [{ "path": "$TEMP/watchtower-edit" }, { "path": "$TEMP/watchtower-edit/**" }]
+    },
+    {
+      "identifier": "fs:allow-remove",
+      "allow": [{ "path": "$TEMP/watchtower-edit/**" }]
     }
   ]
 }

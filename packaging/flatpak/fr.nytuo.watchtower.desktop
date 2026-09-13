@@ -1,0 +1,10 @@
+[Desktop Entry]
+Type=Application
+Name=Watchtower
+Comment=Privacy-first SSH/SFTP/FTP desktop client
+Exec=watchtower %U
+Icon=fr.nytuo.watchtower
+Terminal=false
+Categories=Network;RemoteAccess;
+MimeType=x-scheme-handler/ssh;x-scheme-handler/watchtower;
+StartupWMClass=Watchtower

@@ -584,7 +584,30 @@ export const generateSshKey = (params: {
   passphrase?: string;
 }) => invoke<GeneratedKey>("generate_ssh_key", { ...params });
 
-// ── Telnet / Mosh / PTY terminal sessions ──────────────────────
+export interface MountInfo {
+  id: string;
+  server_id: string;
+  server_name: string;
+  host: string;
+  remote_path: string;
+  mount_point: string;
+}
+export interface MountToolStatus {
+  available: boolean;
+  tool: string;
+  hint: string;
+}
+export const mountCheckTool = () =>
+  invoke<MountToolStatus>("mount_check_tool");
+export const mountSftp = (params: {
+  serverId: string;
+  remotePath?: string;
+  mountPoint?: string;
+}) => invoke<MountInfo>("mount_sftp", { ...params });
+export const unmountSftp = (mountId: string) =>
+  invoke("unmount_sftp", { mountId });
+export const listMounts = () => invoke<MountInfo[]>("list_mounts");
+
 export const telnetConnect = (
   host: string,
   port: number,
@@ -622,7 +645,6 @@ export const termStartLog = (sessionId: string, path: string) =>
 export const termStopLog = (sessionId: string) =>
   invoke("term_stop_log", { sessionId });
 
-// ── FTP / FTPS ────────────────────────────────────────────────
 export interface FtpEntry {
   name: string;
   path: string;
@@ -653,7 +675,6 @@ export const ftpDownload = (id: string, remote: string, local: string) =>
 export const ftpUpload = (id: string, local: string, remote: string) =>
   invoke("ftp_upload", { id, local, remote });
 
-// ── Cloud import (AWS / Azure) ────────────────────────────────
 export const cloudListAws = (params: {
   accessKey: string;
   secretKey: string;
@@ -696,7 +717,6 @@ export const sshResize = (sessionId: string, cols: number, rows: number) =>
 export const sshDisconnect = (sessionId: string) =>
   invoke("ssh_disconnect", { sessionId });
 
-// Terminal-agnostic dispatch: SSH sessions vs. telnet/mosh PTY sessions.
 export const termKindWrite = (
   kind: string | undefined,
   backendId: string,

@@ -56,6 +56,8 @@ pub struct SshSession {
 
     pub host_key: HostKeyOutcome,
 
+    pub jump_host_keys: Vec<(String, u16, HostKeyOutcome)>,
+
     pub jump_handles: Vec<Handle<SshHandler>>,
 
     pub log_file: Arc<Mutex<Option<tokio::fs::File>>>,
@@ -232,8 +234,6 @@ async fn keyboard_interactive_ui(
                 instructions,
                 prompts,
             } => {
-                // If every prompt is a hidden "password" field and we already
-                // have the password, answer it without bothering the user.
                 let all_password = !prompts.is_empty()
                     && prompts
                         .iter()
@@ -391,8 +391,6 @@ async fn connect_hop(
     Ok((handle, remote_forwards, o))
 }
 
-/// Connects + authenticates against the target only (no jump chain, no PTY),
-/// then disconnects. Returns the elapsed milliseconds.
 pub async fn test_connect(
     server: &ServerEntry,
     known_hosts: Vec<KnownHost>,
@@ -438,10 +436,16 @@ pub async fn connect_and_open_pty(
     default_shell: Option<String>,
     kbd: Option<KbdInteractive>,
 ) -> AppResult<SshSession> {
+    tracing::info!(
+        host = %server.host,
+        port = server.port,
+        username = %server.username,
+        jumps = server.advanced.jump_hosts.len(),
+        "connecting ssh session"
+    );
     let adv = &server.advanced;
     let mut kbd = kbd;
 
-    // First TCP hop: the first jump host if present, otherwise the target.
     let (first_host, first_port) = match adv.jump_hosts.first() {
         Some(j) => (j.host.clone(), j.port),
         None => (server.host.clone(), server.port),
@@ -456,15 +460,15 @@ pub async fn connect_and_open_pty(
     )
     .await?;
 
-    // Walk the jump-host chain, tunnelling to the next hop each time.
     let mut jump_handles: Vec<Handle<SshHandler>> = Vec::new();
+    let mut jump_host_keys: Vec<(String, u16, HostKeyOutcome)> = Vec::new();
     for (i, jh) in adv.jump_hosts.iter().enumerate() {
         let (next_host, next_port) = match adv.jump_hosts.get(i + 1) {
             Some(n) => (n.host.clone(), n.port),
             None => (server.host.clone(), server.port),
         };
 
-        let (jh_handle, _rf, _o) = connect_hop(
+        let (jh_handle, _rf, jh_key) = connect_hop(
             stream,
             &jh.host,
             jh.port,
@@ -476,6 +480,7 @@ pub async fn connect_and_open_pty(
             &mut None,
         )
         .await?;
+        jump_host_keys.push((jh.host.clone(), jh.port, jh_key));
 
         let channel = jh_handle
             .channel_open_direct_tcpip(next_host.clone(), next_port as u32, "127.0.0.1", 0)
@@ -490,7 +495,6 @@ pub async fn connect_and_open_pty(
         jump_handles.push(jh_handle);
     }
 
-    // Final hop: the target server.
     let (handle, remote_forwards, host_key) = connect_hop(
         stream,
         &server.host,
@@ -631,6 +635,7 @@ pub async fn connect_and_open_pty(
         remote_forwards,
         tunnels: Mutex::new(TunnelManager::new()),
         host_key,
+        jump_host_keys,
         jump_handles,
         log_file,
     })
@@ -646,6 +651,28 @@ impl SessionManager {
         Self {
             sessions: HashMap::new(),
             term_sessions: HashMap::new(),
+        }
+    }
+
+    pub async fn close_all(&mut self) {
+        for (id, session) in self.sessions.drain() {
+            tracing::info!(session_id = %id, "closing ssh session on lock");
+            let _ = session.shutdown_tx.send(()).await;
+            session
+                .tunnels
+                .lock()
+                .await
+                .stop_all(&session.handle, &session.remote_forwards)
+                .await;
+            let handle = session.handle.lock().await;
+            handle
+                .disconnect(russh::Disconnect::ByApplication, "Vault locked", "en")
+                .await
+                .ok();
+        }
+        for (id, term) in self.term_sessions.drain() {
+            tracing::info!(session_id = %id, "closing terminal session on lock");
+            let _ = term.shutdown_tx.send(()).await;
         }
     }
 }

@@ -27,6 +27,7 @@ import { open as openUrl } from "@tauri-apps/plugin-shell";
 import { syncPush, syncStatus } from "@/lib/tauri";
 import { pullAndReload } from "@/hooks/use-sync";
 import { RefreshCw } from "lucide-react";
+import { Checkbox } from "@/components/ui/checkbox";
 
 const REPO = "Nytuo/watchtower";
 
@@ -386,11 +387,11 @@ export function SettingsPanel() {
             </legend>
 
             <label className="flex items-center gap-2 text-sm">
-              <input
-                type="checkbox"
+              <Checkbox
                 checked={form.log_connections}
-                onChange={(e) => update("log_connections", e.target.checked)}
-                className="rounded border-border"
+                onCheckedChange={(checked) =>
+                  update("log_connections", checked === true)
+                }
               />
               Log connection events
             </label>
@@ -415,23 +416,21 @@ export function SettingsPanel() {
             </legend>
 
             <label className="flex items-center gap-2 text-sm">
-              <input
-                type="checkbox"
+              <Checkbox
                 checked={form.confirm_on_disconnect}
-                onChange={(e) =>
-                  update("confirm_on_disconnect", e.target.checked)
+                onCheckedChange={(checked) =>
+                  update("confirm_on_disconnect", checked === true)
                 }
-                className="rounded border-border"
               />
               Confirm before disconnecting
             </label>
 
             <label className="flex items-center gap-2 text-sm">
-              <input
-                type="checkbox"
+              <Checkbox
                 checked={form.confirm_on_delete}
-                onChange={(e) => update("confirm_on_delete", e.target.checked)}
-                className="rounded border-border"
+                onCheckedChange={(checked) =>
+                  update("confirm_on_delete", checked === true)
+                }
               />
               Confirm before deleting items
             </label>
@@ -483,11 +482,11 @@ export function SettingsPanel() {
             </div>
 
             <label className="flex items-center gap-2 text-sm">
-              <input
-                type="checkbox"
-                className="rounded border-border"
+              <Checkbox
                 checked={form.auto_reconnect}
-                onChange={(e) => update("auto_reconnect", e.target.checked)}
+                onCheckedChange={(checked) =>
+                  update("auto_reconnect", checked === true)
+                }
               />
               Automatically reconnect dropped sessions
             </label>
@@ -542,7 +541,7 @@ export function SettingsPanel() {
                 <div className="space-y-2">
                   <Label>
                     URL (full path to the blob, e.g.
-                    https://cloud.example.com/remote.php/dav/files/me/watchtower.nyt)
+                    https://cloud.example.com/remote.php/dav/files/me/vault.watchtower)
                   </Label>
                   <Input
                     value={form.sync_url ?? ""}
@@ -579,11 +578,11 @@ export function SettingsPanel() {
                   </div>
                 </div>
                 <label className="flex items-center gap-2 text-sm">
-                  <input
-                    type="checkbox"
-                    className="rounded border-border"
+                  <Checkbox
                     checked={form.sync_auto}
-                    onChange={(e) => update("sync_auto", e.target.checked)}
+                    onCheckedChange={(checked) =>
+                      update("sync_auto", checked === true)
+                    }
                   />
                   Auto: pull on unlock, push after changes
                 </label>

@@ -1,5 +1,6 @@
 pub mod commands;
 pub mod error;
+pub mod logging;
 pub mod ssh;
 pub mod vault;
 
@@ -11,6 +12,7 @@ use crate::commands::ftp;
 use crate::commands::import_export;
 use crate::commands::keygen;
 use crate::commands::local_fs;
+use crate::commands::mount;
 use crate::commands::sftp_commands;
 use crate::commands::ssh_commands;
 use crate::commands::sync;
@@ -35,6 +37,7 @@ pub fn run() {
             tokio::sync::Mutex::new(std::collections::HashMap::new()),
         )
         .manage::<ftp::SharedFtp>(tokio::sync::Mutex::new(std::collections::HashMap::new()))
+        .manage::<mount::SharedMounts>(tokio::sync::Mutex::new(std::collections::HashMap::new()))
         .invoke_handler(tauri::generate_handler![
             vault_commands::vault_create,
             vault_commands::vault_open,
@@ -55,6 +58,10 @@ pub fn run() {
             import_export::export_json_to,
             import_export::export_ssh_config,
             keygen::generate_ssh_key,
+            mount::mount_check_tool,
+            mount::mount_sftp,
+            mount::unmount_sftp,
+            mount::list_mounts,
             sync::sync_status,
             sync::sync_push,
             sync::sync_pull,
@@ -152,6 +159,18 @@ pub fn run() {
             biometric::biometric_clear,
         ])
         .setup(|app| {
+            use tauri::Manager;
+            let guard = logging::init(app.handle());
+            app.manage(guard);
+            tracing::info!(version = env!("CARGO_PKG_VERSION"), "Watchtower starting");
+
+            {
+                let handle = app.handle().clone();
+                tauri::async_runtime::spawn(async move {
+                    mount::reconcile_orphaned_mounts(&handle).await;
+                });
+            }
+
             #[cfg(desktop)]
             {
                 use tauri::Emitter;
@@ -166,6 +185,18 @@ pub fn run() {
             }
             Ok(())
         })
-        .run(tauri::generate_context!())
-        .expect("error while running tauri application");
+        .build(tauri::generate_context!())
+        .expect("error while building tauri application")
+        .run(|app_handle, event| {
+            if let tauri::RunEvent::ExitRequested { api, .. } = event {
+                use tauri::Manager;
+                api.prevent_exit();
+                let app_handle = app_handle.clone();
+                tauri::async_runtime::spawn(async move {
+                    let mounts = app_handle.state::<mount::SharedMounts>();
+                    mount::unmount_all(&mounts).await;
+                    app_handle.exit(0);
+                });
+            }
+        });
 }

@@ -28,7 +28,6 @@ pub async fn ssh_submit_kbd(
             }
         }
         None => {
-            // Cancel: dropping the sender ends the auth wait.
             kbd_state.lock().await.remove(&client_id);
         }
     }
@@ -53,6 +52,62 @@ fn persist_known_host(
         store::save_vault(&path, &kdf, &key, data)?;
     }
     Ok(())
+}
+
+fn persist_host_key_outcome(
+    vault_state: &State<'_, SharedVaultState>,
+    on_log: &Channel<ConnectionLog>,
+    host: &str,
+    port: u16,
+    outcome: &crate::ssh::client::HostKeyOutcome,
+    jump_label: Option<&str>,
+) {
+    let prefix = jump_label
+        .map(|l| format!("{l} {host}: "))
+        .unwrap_or_default();
+    match outcome {
+        crate::ssh::client::HostKeyOutcome::Verified {
+            fingerprint,
+            key_type,
+        } => {
+            emit_log(
+                on_log,
+                LogLevel::Success,
+                &format!("{prefix}Host key verified"),
+                Some(&format!("{} SHA256:{}", key_type, fingerprint)),
+            );
+        }
+        crate::ssh::client::HostKeyOutcome::AcceptedNew {
+            fingerprint,
+            key_type,
+        } => {
+            let kh = crate::vault::schema::KnownHost {
+                host: host.to_string(),
+                port,
+                key_type: key_type.clone(),
+                key_fingerprint: fingerprint.clone(),
+                key_data: None,
+                first_seen: crate::vault::schema::timestamp_now(),
+                last_seen: None,
+                trusted: true,
+            };
+            if let Err(e) = persist_known_host(vault_state, kh) {
+                emit_log(
+                    on_log,
+                    LogLevel::Warning,
+                    &format!("{prefix}Could not save host key to vault"),
+                    Some(&format!("{}", e)),
+                );
+            }
+            emit_log(
+                on_log,
+                LogLevel::Warning,
+                &format!("{prefix}New host key trusted on first use"),
+                Some(&format!("{} SHA256:{}", key_type, fingerprint)),
+            );
+        }
+        _ => {}
+    }
 }
 
 fn emit_log(
@@ -222,49 +277,24 @@ pub async fn ssh_connect(
 
     match result {
         Ok(ssh_session) => {
-            match &ssh_session.host_key {
-                crate::ssh::client::HostKeyOutcome::Verified {
-                    fingerprint,
-                    key_type,
-                } => {
-                    emit_log(
-                        &on_log,
-                        LogLevel::Success,
-                        "Host key verified",
-                        Some(&format!("{} SHA256:{}", key_type, fingerprint)),
-                    );
-                }
-                crate::ssh::client::HostKeyOutcome::AcceptedNew {
-                    fingerprint,
-                    key_type,
-                } => {
-                    let kh = crate::vault::schema::KnownHost {
-                        host: server.host.clone(),
-                        port: server.port,
-                        key_type: key_type.clone(),
-                        key_fingerprint: fingerprint.clone(),
-                        key_data: None,
-                        first_seen: crate::vault::schema::timestamp_now(),
-                        last_seen: None,
-                        trusted: true,
-                    };
-                    if let Err(e) = persist_known_host(&vault_state, kh) {
-                        emit_log(
-                            &on_log,
-                            LogLevel::Warning,
-                            "Could not save host key to vault",
-                            Some(&format!("{}", e)),
-                        );
-                    }
-                    emit_log(
-                        &on_log,
-                        LogLevel::Warning,
-                        "New host key trusted on first use",
-                        Some(&format!("{} SHA256:{}", key_type, fingerprint)),
-                    );
-                }
-                _ => {}
+            for (jh_host, jh_port, jh_outcome) in &ssh_session.jump_host_keys {
+                persist_host_key_outcome(
+                    &vault_state,
+                    &on_log,
+                    jh_host,
+                    *jh_port,
+                    jh_outcome,
+                    Some("Jump host"),
+                );
             }
+            persist_host_key_outcome(
+                &vault_state,
+                &on_log,
+                &server.host,
+                server.port,
+                &ssh_session.host_key,
+                None,
+            );
 
             emit_log(
                 &on_log,
@@ -272,6 +302,7 @@ pub async fn ssh_connect(
                 "Connected successfully",
                 Some(&format!("Session: {}", session_id)),
             );
+            tracing::info!(session_id = %session_id, host = %server.host, "ssh session connected");
 
             let mut manager = session_state.lock().await;
             manager.sessions.insert(session_id.clone(), ssh_session);
@@ -294,6 +325,7 @@ pub async fn ssh_connect(
                 "Connection failed",
                 Some(&format!("{}", e)),
             );
+            tracing::error!(host = %server.host, error = %e, "ssh connect failed");
             Err(e)
         }
     }
@@ -373,6 +405,7 @@ pub async fn ssh_connect_adhoc(
     {
         Ok(ssh_session) => {
             emit_log(&on_log, LogLevel::Success, "Connected", None);
+            tracing::info!(session_id = %session_id, %host, "adhoc ssh session connected");
             session_state
                 .lock()
                 .await
@@ -387,6 +420,7 @@ pub async fn ssh_connect_adhoc(
                 "Connection failed",
                 Some(&format!("{}", e)),
             );
+            tracing::error!(%host, error = %e, "adhoc ssh connect failed");
             Err(e)
         }
     }

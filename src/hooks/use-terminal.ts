@@ -3,7 +3,6 @@ import { Terminal } from "@xterm/xterm";
 import { FitAddon } from "@xterm/addon-fit";
 import { WebLinksAddon } from "@xterm/addon-web-links";
 import { SearchAddon } from "@xterm/addon-search";
-import { SerializeAddon } from "@xterm/addon-serialize";
 import { Unicode11Addon } from "@xterm/addon-unicode11";
 import { WebglAddon } from "@xterm/addon-webgl";
 import {
@@ -82,7 +81,6 @@ interface UseTerminalOptions {
 }
 
 const FONT_SCALE_KEY = "watchtower:term:fontScale";
-const SCROLLBACK_PREFIX = "watchtower:term:scrollback:";
 
 function getFontScale(): number {
   try {
@@ -163,7 +161,6 @@ export function useTerminal({ sessionId, server }: UseTerminalOptions) {
   const termRef = useRef<Terminal | null>(null);
   const fitAddonRef = useRef<FitAddon | null>(null);
   const searchAddonRef = useRef<SearchAddon | null>(null);
-  const serializeAddonRef = useRef<SerializeAddon | null>(null);
 
   const { updateSession } = useSessionStore();
   const { updateServer } = useVaultStore();
@@ -237,11 +234,9 @@ export function useTerminal({ sessionId, server }: UseTerminalOptions) {
 
     const fitAddon = new FitAddon();
     const searchAddon = new SearchAddon();
-    const serializeAddon = new SerializeAddon();
     term.loadAddon(fitAddon);
     term.loadAddon(new WebLinksAddon());
     term.loadAddon(searchAddon);
-    term.loadAddon(serializeAddon);
     try {
       const unicode11 = new Unicode11Addon();
       term.loadAddon(unicode11);
@@ -265,7 +260,6 @@ export function useTerminal({ sessionId, server }: UseTerminalOptions) {
     termRef.current = term;
     fitAddonRef.current = fitAddon;
     searchAddonRef.current = searchAddon;
-    serializeAddonRef.current = serializeAddon;
 
     const disposedRef = {
       get current() {
@@ -322,20 +316,6 @@ export function useTerminal({ sessionId, server }: UseTerminalOptions) {
         }),
       );
       if (disposed) return;
-
-      // Replay the previous session's scrollback for context.
-      try {
-        const saved = localStorage.getItem(SCROLLBACK_PREFIX + server.id);
-        if (saved) {
-          term.write(
-            `${C.dim}──── previous session ────${C.reset}\r\n` +
-              saved +
-              `\r\n${C.dim}─────────────────────────${C.reset}\r\n`,
-          );
-        }
-      } catch {
-        /* ignore */
-      }
 
       writeSpacer(term, disposedRef);
       writeLine(
@@ -592,21 +572,10 @@ export function useTerminal({ sessionId, server }: UseTerminalOptions) {
         useKbdStore.getState().setPending(null);
       }
       container.removeEventListener("contextmenu", onContextMenu);
-      try {
-        const dump = serializeAddon.serialize({ scrollback: 2000 });
-        if (dump.trim())
-          localStorage.setItem(
-            SCROLLBACK_PREFIX + server.id,
-            dump.slice(-60000),
-          );
-      } catch {
-        /* ignore */
-      }
       term.dispose();
       termRef.current = null;
       fitAddonRef.current = null;
       searchAddonRef.current = null;
-      serializeAddonRef.current = null;
     };
   }, [
     sessionId,

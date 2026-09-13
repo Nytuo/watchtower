@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from "react";
+import React, { useState, useEffect, useCallback } from "react";
 import {
   open as openFileDialog,
   save as saveFileDialog,
@@ -7,16 +7,16 @@ import { useVaultStore } from "@/stores/vault-store";
 import {
   vaultExists,
   vaultDefaultPath,
+  vaultCurrentPath,
   biometricAvailable,
-  biometricHas,
   biometricStore,
   biometricRetrieve,
 } from "@/lib/tauri";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
+import { Checkbox } from "@/components/ui/checkbox";
 import {
-  Shield,
   Lock,
   Plus,
   FolderOpen,
@@ -27,7 +27,7 @@ import {
   Fingerprint,
 } from "lucide-react";
 
-type Mode = "choose" | "unlock" | "create" | "open-file";
+type Mode = "main" | "create" | "switch";
 
 const RECENT_VAULT_KEY = "watchtower:recent_vault_path";
 const RECENT_VAULTS_KEY = "watchtower:recent_vaults";
@@ -56,98 +56,131 @@ function setRecentPath(path: string) {
   }
 }
 
-export function VaultPage() {
-  const {
-    vaultExists: hasDefaultVault,
-    createVault,
-    openVault,
-    loading,
-    error,
-    clearError,
-  } = useVaultStore();
+function fileNameOf(path: string): string {
+  return path.split(/[/\\]/).pop() ?? path;
+}
 
-  const [mode, setMode] = useState<Mode>(hasDefaultVault ? "unlock" : "choose");
+async function resolveTargetVault(): Promise<string | null> {
+  const current = await vaultCurrentPath().catch(() => null);
+  if (current) return current;
+
+  const hasDefault = await vaultExists().catch(() => false);
+  if (hasDefault) {
+    const defaultPath = await vaultDefaultPath().catch(() => null);
+    if (defaultPath) return defaultPath;
+  }
+
+  for (const rp of getRecentPaths()) {
+    if (await vaultExists(rp).catch(() => false)) return rp;
+  }
+  return null;
+}
+
+export function VaultPage() {
+  const { createVault, openVault, loading, error, clearError, hasUnlockedOnce } =
+    useVaultStore();
+
+  const [mode, setMode] = useState<Mode>("main");
+  const [resolving, setResolving] = useState(true);
+  const [targetPath, setTargetPath] = useState<string | null>(null);
+  const [targetInvalid, setTargetInvalid] = useState(false);
+
   const [password, setPassword] = useState("");
   const [confirmPassword, setConfirmPassword] = useState("");
   const [showPassword, setShowPassword] = useState(false);
   const [showConfirm, setShowConfirm] = useState(false);
-  const [selectedPath, setSelectedPath] = useState<string | null>(null);
-  const [pathVaultExists, setPathVaultExists] = useState<boolean | null>(null);
   const [createPath, setCreatePath] = useState<string | null>(null);
   const [remember, setRemember] = useState(false);
-  const [bioPath, setBioPath] = useState<string | null>(null);
-  const [bioHasEntry, setBioHasEntry] = useState(false);
-  const recentPaths = getRecentPaths();
-  const recentPath = recentPaths[0] ?? null;
+  const [bioAvailable, setBioAvailable] = useState(false);
+  const [bioMessage, setBioMessage] = useState<string | null>(null);
+
+  const recentPaths = getRecentPaths().filter((p) => p !== targetPath);
 
   useEffect(() => {
     let cancelled = false;
-    (async () => {
-      let p: string | null = null;
-      if (mode === "unlock") {
-        p = await vaultDefaultPath().catch(() => null);
-      } else if (mode === "open-file") {
-        p = selectedPath;
-      }
+    setResolving(true);
+    resolveTargetVault().then((p) => {
       if (cancelled) return;
-      setBioPath(p);
-      if (p && (await biometricAvailable(p).catch(() => false))) {
-        const has = await biometricHas(p).catch(() => false);
-        if (!cancelled) setBioHasEntry(has);
-      } else if (!cancelled) {
-        setBioHasEntry(false);
+      setTargetPath(p);
+      if (!p) setMode("switch");
+      setResolving(false);
+    });
+    return () => {
+      cancelled = true;
+    };
+  }, []);
+
+  useEffect(() => {
+    let cancelled = false;
+    setBioMessage(null);
+    setTargetInvalid(false);
+    if (!targetPath) {
+      setBioAvailable(false);
+      return;
+    }
+    (async () => {
+      const exists = await vaultExists(targetPath).catch(() => false);
+      if (cancelled) return;
+      if (!exists) {
+        setTargetInvalid(true);
+        setBioAvailable(false);
+        return;
+      }
+      const available = await biometricAvailable(targetPath).catch(
+        () => false,
+      );
+      if (cancelled) return;
+      setBioAvailable(available);
+      if (available && !hasUnlockedOnce) {
+        try {
+          const pw = await biometricRetrieve(targetPath);
+          if (!cancelled && pw) await openVault(pw, targetPath);
+        } catch {
+          /* fall through to manual unlock */
+        }
       }
     })();
     return () => {
       cancelled = true;
     };
-  }, [mode, selectedPath]);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [targetPath]);
 
   const handleBiometricUnlock = async () => {
-    if (!bioPath) return;
+    if (!targetPath) return;
     clearError();
+    setBioMessage(null);
     try {
-      const pw = await biometricRetrieve(bioPath);
-      if (!pw) return;
-      await openVault(pw, mode === "unlock" ? undefined : bioPath);
-    } catch {
-      /* store surfaces the error */
+      const pw = await biometricRetrieve(targetPath);
+      if (!pw) {
+        setBioMessage(
+          "No password saved in the system keychain for this vault yet — enter it below and check “Remember on this device” to save it.",
+        );
+        return;
+      }
+      await openVault(pw, targetPath);
+    } catch (e) {
+      setBioMessage(String(e));
     }
   };
 
-  useEffect(() => {
-    setMode(hasDefaultVault ? "unlock" : "choose");
-  }, [hasDefaultVault]);
-
-  useEffect(() => {
-    if (!selectedPath) {
-      setPathVaultExists(null);
-      return;
-    }
-    let cancelled = false;
-    vaultExists(selectedPath).then((exists) => {
-      if (!cancelled) setPathVaultExists(exists);
-    });
-    return () => {
-      cancelled = true;
-    };
-  }, [selectedPath]);
-
-  const reset = (next: Mode) => {
+  const reset = useCallback((next: Mode) => {
     clearError();
     setPassword("");
     setConfirmPassword("");
     setShowPassword(false);
     setShowConfirm(false);
     setCreatePath(null);
+    setRemember(false);
     setMode(next);
-  };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
 
   const handlePickSaveLocation = async () => {
     const result = await saveFileDialog({
       title: "Create Watchtower Vault",
-      defaultPath: "vault.nyt",
-      filters: [{ name: "Watchtower Vault", extensions: ["nyt"] }],
+      defaultPath: "vault.watchtower",
+      filters: [{ name: "Watchtower Vault", extensions: ["watchtower"] }],
     });
     if (result) {
       setCreatePath(result);
@@ -155,18 +188,26 @@ export function VaultPage() {
     }
   };
 
-  const handlePickFile = async () => {
+  const handleBrowseForVault = async () => {
     const result = await openFileDialog({
       title: "Open Watchtower Vault",
-      filters: [{ name: "Watchtower Vault", extensions: ["nyt"] }],
+      filters: [{ name: "Watchtower Vault", extensions: ["watchtower", "nyt"] }],
       multiple: false,
       directory: false,
     });
     if (result) {
-      const path = typeof result === "string" ? result : result;
-      setSelectedPath(path as string);
       clearError();
+      setPassword("");
+      setTargetPath(result as string);
+      setMode("main");
     }
+  };
+
+  const handleSelectRecent = (rp: string) => {
+    clearError();
+    setPassword("");
+    setTargetPath(rp);
+    setMode("main");
   };
 
   const handleSubmit = async (e: React.FormEvent) => {
@@ -176,18 +217,15 @@ export function VaultPage() {
     try {
       if (mode === "create") {
         await createVault(password, createPath ?? undefined);
-        if (createPath) setRecentPath(createPath);
-        if (remember && createPath)
-          await biometricStore(createPath, password).catch(() => {});
-      } else if (mode === "unlock") {
-        await openVault(password);
-        if (remember && bioPath)
-          await biometricStore(bioPath, password).catch(() => {});
-      } else if (mode === "open-file" && selectedPath) {
-        await openVault(password, selectedPath);
-        setRecentPath(selectedPath);
+        if (createPath) {
+          setRecentPath(createPath);
+          if (remember) await biometricStore(createPath, password).catch(() => {});
+        }
+      } else if (targetPath) {
+        await openVault(password, targetPath);
+        setRecentPath(targetPath);
         if (remember)
-          await biometricStore(selectedPath, password).catch(() => {});
+          await biometricStore(targetPath, password).catch(() => {});
       }
     } catch {
       /* store surfaces the error */
@@ -206,20 +244,105 @@ export function VaultPage() {
   const canSubmit =
     !loading &&
     password.length > 0 &&
-    (mode !== "create" ||
-      (!passwordMismatch &&
-        !tooShort &&
-        confirmPassword.length > 0 &&
-        !!createPath)) &&
-    (mode !== "open-file" || !!selectedPath);
+    (mode !== "create"
+      ? !!targetPath && !targetInvalid
+      : !passwordMismatch && !tooShort && confirmPassword.length > 0 && !!createPath);
 
-  if (mode === "choose") {
+  if (mode === "create") {
     return (
-      <VaultLayout>
-        <p className="text-sm text-muted-foreground text-center mb-8">
-          Create a new encrypted vault or open an existing one.
-        </p>
+      <VaultLayout
+        back={() => reset("switch")}
+        title="Create Vault"
+        description="Choose a location and set a master password to protect your servers and credentials."
+      >
+        <form
+          onSubmit={handleSubmit}
+          className="space-y-5 w-full max-w-xs mx-auto"
+        >
+          <div className="space-y-2">
+            <Label>Vault location</Label>
+            <button
+              type="button"
+              onClick={handlePickSaveLocation}
+              className="w-full flex items-center gap-3 rounded-md border border-border bg-muted/40 px-3 py-2.5 text-sm hover:bg-muted/70 transition-colors"
+            >
+              <FolderOpen className="h-4 w-4 text-muted-foreground shrink-0" />
+              {createPath ? (
+                <span className="truncate text-left">
+                  {fileNameOf(createPath)}
+                  <span className="block text-xs text-muted-foreground truncate">
+                    {createPath}
+                  </span>
+                </span>
+              ) : (
+                <span className="text-muted-foreground">
+                  Choose save location…
+                </span>
+              )}
+            </button>
+          </div>
 
+          <PasswordField
+            id="cr-password"
+            label="Master Password"
+            value={password}
+            show={showPassword}
+            onChange={setPassword}
+            onToggleShow={() => setShowPassword((v) => !v)}
+            autoFocus
+          >
+            {tooShort && (
+              <p className="text-xs text-destructive">
+                Password must be at least 4 characters
+              </p>
+            )}
+          </PasswordField>
+
+          <PasswordField
+            id="cr-confirm"
+            label="Confirm Password"
+            value={confirmPassword}
+            show={showConfirm}
+            onChange={setConfirmPassword}
+            onToggleShow={() => setShowConfirm((v) => !v)}
+          >
+            {passwordMismatch && (
+              <p className="text-xs text-destructive">Passwords do not match</p>
+            )}
+          </PasswordField>
+
+          <label className="flex items-center gap-2 text-sm">
+            <Checkbox
+              checked={remember}
+              onCheckedChange={(v) => setRemember(v === true)}
+            />
+            Remember on this device (system keychain)
+          </label>
+
+          {error && <ErrorBox message={error} />}
+
+          <Button type="submit" className="w-full" disabled={!canSubmit}>
+            {loading ? (
+              <span className="animate-pulse">Creating…</span>
+            ) : (
+              <>
+                <Plus className="mr-2 h-4 w-4" />
+                Create Vault
+              </>
+            )}
+          </Button>
+        </form>
+      </VaultLayout>
+    );
+  }
+
+  if (mode === "switch") {
+    return (
+      <VaultLayout
+        back={targetPath ? () => reset("main") : undefined}
+        title="Select a vault"
+        description="Create a new encrypted vault or open an existing one."
+      >
         <div className="flex flex-col gap-3 w-full max-w-xs mx-auto">
           <ChoiceButton
             icon={<Plus className="h-4 w-4" />}
@@ -231,10 +354,8 @@ export function VaultPage() {
           <ChoiceButton
             icon={<FolderOpen className="h-4 w-4" />}
             label="Open vault file"
-            description="Browse for an existing .nyt file"
-            onClick={() => {
-              reset("open-file");
-            }}
+            description="Browse for an existing .watchtower file"
+            onClick={handleBrowseForVault}
           />
 
           {recentPaths.length > 0 && (
@@ -245,12 +366,9 @@ export function VaultPage() {
                 <ChoiceButton
                   key={rp}
                   icon={<Lock className="h-4 w-4" />}
-                  label={rp.split(/[/\\]/).pop() ?? rp}
+                  label={fileNameOf(rp)}
                   description={rp}
-                  onClick={() => {
-                    reset("open-file");
-                    setTimeout(() => setSelectedPath(rp), 0);
-                  }}
+                  onClick={() => handleSelectRecent(rp)}
                 />
               ))}
             </>
@@ -260,96 +378,33 @@ export function VaultPage() {
     );
   }
 
-  if (mode === "open-file") {
-    const fileName = selectedPath ? selectedPath.split(/[/\\]/).pop() : null;
-
-    return (
-      <VaultLayout
-        back={hasDefaultVault ? () => reset("unlock") : () => reset("choose")}
-        title="Open Vault"
-        description="Choose a vault file and enter its master password."
-      >
+  return (
+    <VaultLayout title="Unlock Vault" description="Enter your master password to access your servers.">
+      {resolving ? (
+        <p className="text-center text-sm text-muted-foreground">Loading…</p>
+      ) : (
         <form
           onSubmit={handleSubmit}
           className="space-y-5 w-full max-w-xs mx-auto"
         >
-          <div className="space-y-2">
-            <Label>Vault file</Label>
-            <button
-              type="button"
-              onClick={handlePickFile}
-              className="w-full flex items-center gap-3 rounded-md border border-border bg-muted/40 px-3 py-2.5 text-sm hover:bg-muted/70 transition-colors"
-            >
-              <FolderOpen className="h-4 w-4 text-muted-foreground shrink-0" />
-              {selectedPath ? (
-                <span className="truncate text-left">
-                  {fileName}
-                  <span className="block text-xs text-muted-foreground truncate">
-                    {selectedPath}
-                  </span>
-                </span>
-              ) : (
-                <span className="text-muted-foreground">
-                  Browse for .nyt file…
-                </span>
-              )}
-            </button>
-            {selectedPath && pathVaultExists === false && (
-              <p className="text-xs text-destructive">
-                No valid vault found at this path.
-              </p>
+          <div className="rounded-md border border-border bg-muted/40 px-3 py-2.5 text-sm">
+            <div className="font-medium truncate">
+              {targetPath ? fileNameOf(targetPath) : "No vault selected"}
+            </div>
+            {targetPath && (
+              <div className="text-xs text-muted-foreground truncate">
+                {targetPath}
+              </div>
             )}
           </div>
 
-          <PasswordField
-            id="of-password"
-            label="Master Password"
-            value={password}
-            show={showPassword}
-            onChange={setPassword}
-            onToggleShow={() => setShowPassword((v) => !v)}
-            autoFocus
-          />
+          {targetInvalid && (
+            <p className="text-xs text-destructive">
+              No valid vault found at this path anymore.
+            </p>
+          )}
 
-          {error && <ErrorBox message={error} />}
-
-          <Button type="submit" className="w-full" disabled={!canSubmit}>
-            {loading ? (
-              <span className="animate-pulse">Opening…</span>
-            ) : (
-              <>
-                <Lock className="mr-2 h-4 w-4" />
-                Open Vault
-              </>
-            )}
-          </Button>
-
-          <p className="text-center text-xs text-muted-foreground">
-            Need a new vault?{" "}
-            <button
-              type="button"
-              className="underline hover:text-foreground"
-              onClick={() => reset("create")}
-            >
-              Create one
-            </button>
-          </p>
-        </form>
-      </VaultLayout>
-    );
-  }
-
-  if (mode === "unlock") {
-    return (
-      <VaultLayout
-        title="Unlock Vault"
-        description="Enter your master password to access your servers."
-      >
-        <form
-          onSubmit={handleSubmit}
-          className="space-y-5 w-full max-w-xs mx-auto"
-        >
-          {bioHasEntry && (
+          {bioAvailable && (
             <Button
               type="button"
               variant="outline"
@@ -362,6 +417,10 @@ export function VaultPage() {
             </Button>
           )}
 
+          {bioMessage && (
+            <p className="text-xs text-muted-foreground">{bioMessage}</p>
+          )}
+
           <PasswordField
             id="ul-password"
             label="Master Password"
@@ -372,17 +431,13 @@ export function VaultPage() {
             autoFocus
           />
 
-          {!bioHasEntry && (
-            <label className="flex items-center gap-2 text-xs text-muted-foreground">
-              <input
-                type="checkbox"
-                checked={remember}
-                onChange={(e) => setRemember(e.target.checked)}
-                className="rounded border-border"
-              />
-              Remember on this device (system keychain)
-            </label>
-          )}
+          <label className="flex items-center gap-2 text-sm">
+            <Checkbox
+              checked={remember}
+              onCheckedChange={(v) => setRemember(v === true)}
+            />
+            Remember on this device (system keychain)
+          </label>
 
           {error && <ErrorBox message={error} />}
 
@@ -397,102 +452,17 @@ export function VaultPage() {
             )}
           </Button>
 
-          <div className="flex flex-col gap-1.5 items-center">
+          <div className="flex justify-center">
             <button
               type="button"
               className="text-xs text-muted-foreground underline hover:text-foreground"
-              onClick={() => reset("open-file")}
+              onClick={() => reset("switch")}
             >
-              Open a different vault file
-            </button>
-            <button
-              type="button"
-              className="text-xs text-muted-foreground underline hover:text-foreground"
-              onClick={() => reset("create")}
-            >
-              Create a new vault
+              Use a different vault
             </button>
           </div>
         </form>
-      </VaultLayout>
-    );
-  }
-
-  return (
-    <VaultLayout
-      back={hasDefaultVault ? () => reset("unlock") : () => reset("choose")}
-      title="Create Vault"
-      description="Choose a location and set a master password to protect your servers and credentials."
-    >
-      <form
-        onSubmit={handleSubmit}
-        className="space-y-5 w-full max-w-xs mx-auto"
-      >
-        <div className="space-y-2">
-          <Label>Vault location</Label>
-          <button
-            type="button"
-            onClick={handlePickSaveLocation}
-            className="w-full flex items-center gap-3 rounded-md border border-border bg-muted/40 px-3 py-2.5 text-sm hover:bg-muted/70 transition-colors"
-          >
-            <FolderOpen className="h-4 w-4 text-muted-foreground shrink-0" />
-            {createPath ? (
-              <span className="truncate text-left">
-                {createPath.split(/[/\\]/).pop()}
-                <span className="block text-xs text-muted-foreground truncate">
-                  {createPath}
-                </span>
-              </span>
-            ) : (
-              <span className="text-muted-foreground">
-                Choose save location…
-              </span>
-            )}
-          </button>
-        </div>
-
-        <PasswordField
-          id="cr-password"
-          label="Master Password"
-          value={password}
-          show={showPassword}
-          onChange={setPassword}
-          onToggleShow={() => setShowPassword((v) => !v)}
-          autoFocus
-        >
-          {tooShort && (
-            <p className="text-xs text-destructive">
-              Password must be at least 4 characters
-            </p>
-          )}
-        </PasswordField>
-
-        <PasswordField
-          id="cr-confirm"
-          label="Confirm Password"
-          value={confirmPassword}
-          show={showConfirm}
-          onChange={setConfirmPassword}
-          onToggleShow={() => setShowConfirm((v) => !v)}
-        >
-          {passwordMismatch && (
-            <p className="text-xs text-destructive">Passwords do not match</p>
-          )}
-        </PasswordField>
-
-        {error && <ErrorBox message={error} />}
-
-        <Button type="submit" className="w-full" disabled={!canSubmit}>
-          {loading ? (
-            <span className="animate-pulse">Creating…</span>
-          ) : (
-            <>
-              <Plus className="mr-2 h-4 w-4" />
-              Create Vault
-            </>
-          )}
-        </Button>
-      </form>
+      )}
     </VaultLayout>
   );
 }

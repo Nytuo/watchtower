@@ -14,6 +14,7 @@ import { useAutoLock } from "@/hooks/use-auto-lock";
 import { useConnectionMonitor } from "@/hooks/use-connection-monitor";
 import { useDeepLink } from "@/hooks/use-deep-link";
 import { useSync } from "@/hooks/use-sync";
+import { cleanupStaleEditFiles } from "@/lib/cleanup-temp-edits";
 
 export default function App() {
   const { isUnlocked, checkVaultExists } = useVaultStore();
@@ -24,6 +25,7 @@ export default function App() {
 
   useEffect(() => {
     checkVaultExists();
+    cleanupStaleEditFiles();
   }, [checkVaultExists]);
 
   if (!isUnlocked) {

@@ -15,6 +15,7 @@ import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Select } from "@/components/ui/select";
 import { Textarea } from "@/components/ui/textarea";
+import { Checkbox } from "@/components/ui/checkbox";
 import { Save, X, ChevronRight, Plus, Trash2, Wifi } from "lucide-react";
 import { sshTestConnection } from "@/lib/tauri";
 import { OS_ICONS, UnknownOS } from "@/components/icons/os-icons";
@@ -840,13 +841,11 @@ function AdvancedSection({
 
       <div className="space-y-2">
         <label className="flex items-center gap-2">
-          <input
-            type="checkbox"
-            className="rounded border-border"
+          <Checkbox
             checked={!!proxy}
-            onChange={(e) =>
+            onCheckedChange={(checked) =>
               set({
-                proxy: e.target.checked
+                proxy: checked
                   ? {
                       proxy_type: "socks5",
                       host: "127.0.0.1",
@@ -1001,29 +1000,25 @@ function AdvancedSection({
 
       <div className="flex flex-col gap-2">
         <label className="flex items-center gap-2">
-          <input
-            type="checkbox"
-            className="rounded border-border"
+          <Checkbox
             checked={value.compression}
-            onChange={(e) => set({ compression: e.target.checked })}
+            onCheckedChange={(checked) => set({ compression: checked === true })}
           />
           Request compression (zlib)
         </label>
         <label className="flex items-center gap-2">
-          <input
-            type="checkbox"
-            className="rounded border-border"
+          <Checkbox
             checked={value.agent_forwarding}
-            onChange={(e) => set({ agent_forwarding: e.target.checked })}
+            onCheckedChange={(checked) =>
+              set({ agent_forwarding: checked === true })
+            }
           />
           Forward SSH agent
         </label>
         <label className="flex items-center gap-2">
-          <input
-            type="checkbox"
-            className="rounded border-border"
+          <Checkbox
             checked={value.x11_forwarding}
-            onChange={(e) => set({ x11_forwarding: e.target.checked })}
+            onCheckedChange={(checked) => set({ x11_forwarding: checked === true })}
           />
           Forward X11
         </label>
@@ -1060,13 +1055,12 @@ function AdvancedSection({
                 Trigger {i + 1}
               </span>
               <label className="ml-auto flex items-center gap-1 text-xs">
-                <input
-                  type="checkbox"
+                <Checkbox
                   checked={t.once}
-                  onChange={(e) =>
+                  onCheckedChange={(checked) =>
                     set({
                       triggers: (value.triggers ?? []).map((x, idx) =>
-                        idx === i ? { ...x, once: e.target.checked } : x,
+                        idx === i ? { ...x, once: checked === true } : x,
                       ),
                     })
                   }

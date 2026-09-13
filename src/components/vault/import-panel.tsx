@@ -24,6 +24,7 @@ import {
   open as openDialog,
   save as saveDialog,
 } from "@tauri-apps/plugin-dialog";
+import { Checkbox } from "@/components/ui/checkbox";
 import {
   Terminal,
   HardDrive,
@@ -98,7 +99,7 @@ export function ImportPanel() {
     const ok = await confirmDialog({
       title: "Export server list as plain JSON?",
       message:
-        "The export contains hostnames, usernames and ports in the clear (no passwords or keys). Keep the file somewhere safe.",
+        "This is not a full backup — it only lists hostnames, usernames, ports, protocol and notes in the clear. Passwords, keys, groups, tags, snippets, port forwarding rules and known hosts are NOT included. To back up everything, copy the .watchtower vault file itself instead.",
       confirmLabel: "Export",
     });
     if (!ok) return;
@@ -285,10 +286,9 @@ export function ImportPanel() {
                     key={h.id}
                     className="flex items-center gap-2 px-2 py-1 text-xs"
                   >
-                    <input
-                      type="checkbox"
+                    <Checkbox
                       checked={doSel.has(h.id)}
-                      onChange={() =>
+                      onCheckedChange={() =>
                         setDoSel((p) => {
                           const n = new Set(p);
                           n.has(h.id) ? n.delete(h.id) : n.add(h.id);
@@ -323,10 +323,9 @@ export function ImportPanel() {
                 </div>
               </div>
               <label className="flex items-center gap-2 text-xs">
-                <input
-                  type="checkbox"
+                <Checkbox
                   checked={doPrivate}
-                  onChange={(e) => setDoPrivate(e.target.checked)}
+                  onCheckedChange={(checked) => setDoPrivate(checked === true)}
                 />
                 Use private IPs
               </label>
@@ -506,10 +505,9 @@ function CloudImporter({
                 key={h.id}
                 className="flex items-center gap-2 px-2 py-1 text-xs"
               >
-                <input
-                  type="checkbox"
+                <Checkbox
                   checked={sel.has(h.id)}
-                  onChange={() =>
+                  onCheckedChange={() =>
                     setSel((p) => {
                       const n = new Set(p);
                       n.has(h.id) ? n.delete(h.id) : n.add(h.id);
@@ -544,10 +542,9 @@ function CloudImporter({
             </div>
           </div>
           <label className="flex items-center gap-2 text-xs">
-            <input
-              type="checkbox"
+            <Checkbox
               checked={priv}
-              onChange={(e) => setPriv(e.target.checked)}
+              onCheckedChange={(checked) => setPriv(checked === true)}
             />
             Use private IPs
           </label>

@@ -1,0 +1,23 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<component type="desktop-application">
+  <id>fr.nytuo.watchtower</id>
+  <name>Watchtower</name>
+  <summary>Privacy-first SSH/SFTP/FTP desktop client</summary>
+  <metadata_license>CC0-1.0</metadata_license>
+  <project_license>GPL-3.0-only</project_license>
+  <description>
+    <p>
+      Watchtower is a privacy-first SSH, SFTP and FTP client with tabbed
+      terminals, an encrypted server vault, snippet management, port
+      forwarding, and the ability to mount a remote server as a local
+      network drive.
+    </p>
+  </description>
+  <launchable type="desktop-id">fr.nytuo.watchtower.desktop</launchable>
+  <url type="homepage">https://github.com/Nytuo/watchtower</url>
+  <url type="bugtracker">https://github.com/Nytuo/watchtower/issues</url>
+  <content_rating type="oars-1.1" />
+  <releases>
+    <release version="0.1.0" date="2026-04-28" />
+  </releases>
+</component>

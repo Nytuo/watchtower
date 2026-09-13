@@ -1,0 +1,18 @@
+PackageIdentifier: Nytuo.Watchtower
+PackageVersion: 0.1.0
+PackageLocale: en-US
+Publisher: Nytuo
+PublisherUrl: https://nytuo.fr
+PackageName: Watchtower
+PackageUrl: https://github.com/Nytuo/watchtower
+License: GPL-3.0
+LicenseUrl: https://github.com/Nytuo/watchtower/blob/main/LICENSE
+ShortDescription: Privacy-first SSH/SFTP/FTP desktop client
+Tags:
+  - ssh
+  - sftp
+  - ftp
+  - terminal
+  - remote-access
+ManifestType: defaultLocale
+ManifestVersion: 1.6.0

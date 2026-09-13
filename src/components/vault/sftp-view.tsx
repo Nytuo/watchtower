@@ -22,6 +22,7 @@ import {
   Lock,
   Copy,
   PencilLine,
+  HardDrive,
 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -46,6 +47,7 @@ import {
 } from "@/lib/tauri";
 import { useUiStore } from "@/stores/ui-store";
 import { useTransferStore } from "@/stores/transfer-store";
+import { useMountStore } from "@/stores/mount-store";
 import { promptDialog } from "@/stores/dialog-store";
 import { getCurrentWindow } from "@tauri-apps/api/window";
 import { open as openDialog } from "@tauri-apps/plugin-dialog";
@@ -56,6 +58,7 @@ import { tempDir, join } from "@tauri-apps/api/path";
 interface SftpViewProps {
   sessionId: string;
   backendId?: string;
+  serverId: string;
   serverName: string;
   active: boolean;
 }
@@ -125,8 +128,14 @@ const openEdits = new Map<
   { backendId: string; remote: string; local: string; mtime: number }
 >();
 
-export function SftpView({ backendId, active }: SftpViewProps) {
+export function SftpView({ backendId, serverId, active }: SftpViewProps) {
   const { addToast } = useUiStore();
+  const mounts = useMountStore((s) => s.mounts);
+  const mountBusyIds = useMountStore((s) => s.busyIds);
+  const mountAction = useMountStore((s) => s.mount);
+  const unmountAction = useMountStore((s) => s.unmount);
+  const refreshMounts = useMountStore((s) => s.refresh);
+  const activeMount = mounts.find((m) => m.server_id === serverId);
   const {
     transfers,
     addTransfer,
@@ -199,6 +208,38 @@ export function SftpView({ backendId, active }: SftpViewProps) {
   );
 
   useEffect(() => {
+    if (active) refreshMounts();
+  }, [active, refreshMounts]);
+
+  const handleMountToggle = async () => {
+    if (!serverId) return;
+    if (activeMount) {
+      try {
+        await unmountAction(activeMount.id);
+        addToast({ title: "Unmounted", description: activeMount.mount_point });
+      } catch (e) {
+        addToast({
+          title: "Unmount failed",
+          description: String(e),
+          variant: "destructive",
+        });
+      }
+      return;
+    }
+    try {
+      const info = await mountAction(serverId, remotePath);
+      addToast({ title: "Mounted as drive", description: info.mount_point });
+      openPath(info.mount_point).catch(() => {});
+    } catch (e) {
+      addToast({
+        title: "Mount failed",
+        description: String(e),
+        variant: "destructive",
+      });
+    }
+  };
+
+  useEffect(() => {
     if (active && !localPath) {
       localHome()
         .then((h) => loadLocal(h))
@@ -212,7 +253,6 @@ export function SftpView({ backendId, active }: SftpViewProps) {
     }
   }, [active, backendId, remoteFiles.length, remoteLoading, loadRemote]);
 
-  // OS drag-drop → upload to remote cwd
   useEffect(() => {
     const un = getCurrentWindow().listen(
       "tauri://drag-drop",
@@ -237,7 +277,6 @@ export function SftpView({ backendId, active }: SftpViewProps) {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [active, backendId]);
 
-  // Watch open-for-edit files and re-upload on change
   useEffect(() => {
     if (!backendId) return;
     const iv = setInterval(async () => {
@@ -342,7 +381,8 @@ export function SftpView({ backendId, active }: SftpViewProps) {
     try {
       const dir = await join(await tempDir(), "watchtower-edit");
       await fsMkdir(dir, { recursive: true }).catch(() => {});
-      const local = await join(dir, `${Date.now()}-${f.name}`);
+      const safeName = f.name.replace(/[/\\]/g, "_").replace(/^\.+/, "_");
+      const local = await join(dir, `${Date.now()}-${safeName}`);
       await runTransfer("download", f.path, local, f.name, false);
       const s = await stat(local);
       openEdits.set(f.path, {
@@ -622,6 +662,22 @@ export function SftpView({ backendId, active }: SftpViewProps) {
                 onClick={remoteMkdir}
               >
                 <Folder className="h-4 w-4" />
+              </Button>
+              <Button
+                variant={activeMount ? "outline" : "ghost"}
+                size="icon"
+                className={`h-7 w-7 ${activeMount ? "text-green-500" : ""}`}
+                title={
+                  activeMount
+                    ? `Unmount drive (${activeMount.mount_point})`
+                    : "Mount this server as a network drive"
+                }
+                disabled={mountBusyIds.has(serverId)}
+                onClick={handleMountToggle}
+              >
+                <HardDrive
+                  className={`h-4 w-4 ${mountBusyIds.has(serverId) ? "animate-pulse" : ""}`}
+                />
               </Button>
             </div>
           }

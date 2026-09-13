@@ -1,0 +1,22 @@
+<?xml version="1.0" encoding="utf-8"?>
+<package xmlns="http://schemas.microsoft.com/packaging/2015/06/nuspec.xsd">
+  <metadata>
+    <id>watchtower</id>
+    <version>0.1.0</version>
+    <packageSourceUrl>https://github.com/Nytuo/watchtower</packageSourceUrl>
+    <owners>Nytuo</owners>
+    <title>Watchtower</title>
+    <authors>Nytuo</authors>
+    <projectUrl>https://github.com/Nytuo/watchtower</projectUrl>
+    <licenseUrl>https://github.com/Nytuo/watchtower/blob/main/LICENSE</licenseUrl>
+    <requireLicenseAcceptance>false</requireLicenseAcceptance>
+    <projectSourceUrl>https://github.com/Nytuo/watchtower</projectSourceUrl>
+    <bugTrackerUrl>https://github.com/Nytuo/watchtower/issues</bugTrackerUrl>
+    <tags>ssh sftp ftp terminal remote-access</tags>
+    <summary>Privacy-first SSH/SFTP/FTP desktop client</summary>
+    <description>Watchtower is a privacy-first SSH/SFTP/FTP desktop client built with Tauri.</description>
+  </metadata>
+  <files>
+    <file src="tools\**" target="tools" />
+  </files>
+</package>
