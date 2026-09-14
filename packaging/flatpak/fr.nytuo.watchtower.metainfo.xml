@@ -1,23 +1,98 @@
 <?xml version="1.0" encoding="UTF-8"?>
 <component type="desktop-application">
   <id>fr.nytuo.watchtower</id>
+
   <name>Watchtower</name>
-  <summary>Privacy-first SSH/SFTP/FTP desktop client</summary>
+  <summary>Your servers, your secrets, one vault</summary>
+
   <metadata_license>CC0-1.0</metadata_license>
   <project_license>GPL-3.0-only</project_license>
+
+  <content_rating type="oars-1.1" />
+
+  <developer id="fr.nytuo">
+    <name>Nytuo (Arnaud BEUX)</name>
+  </developer>
+
+  <url type="homepage">https://nytuo.fr/software/watchtower</url>
+  <url type="donation">https://ko-fi.com/nytuo</url>
+  <url type="bugtracker">https://github.com/Nytuo/watchtower/issues</url>
+  <url type="contact">https://nytuo.fr/contact</url>
+  <url type="vcs-browser">https://github.com/Nytuo/watchtower</url>
+
+  <recommends>
+    <control>pointing</control>
+    <control>keyboard</control>
+  </recommends>
+
   <description>
     <p>
-      Watchtower is a privacy-first SSH, SFTP and FTP client with tabbed
-      terminals, an encrypted server vault, snippet management, port
-      forwarding, and the ability to mount a remote server as a local
-      network drive.
+      Watchtower is a privacy-first SSH, SFTP and FTP client. It gives you a tabbed interface to manage remote servers, transfer files and keep your credentials in an encrypted vault.
     </p>
+    <p>What Watchtower can do:</p>
+    <ul>
+      <li>Open multiple SSH sessions in tabs, with customizable terminal themes and tagged server profiles</li>
+      <li>Transfer files over SFTP and FTP with drag and drop, progress monitoring and detailed logs</li>
+      <li>Store SSH keys, passwords and snippets in a vault protected by a master password</li>
+      <li>Configure local, remote and dynamic port forwarding</li>
+      <li>Keep track of known hosts and fingerprints to prevent man-in-the-middle attacks</li>
+    </ul>
   </description>
+
   <launchable type="desktop-id">fr.nytuo.watchtower.desktop</launchable>
-  <url type="homepage">https://github.com/Nytuo/watchtower</url>
-  <url type="bugtracker">https://github.com/Nytuo/watchtower/issues</url>
-  <content_rating type="oars-1.1" />
+
+  <screenshots>
+    <screenshot type="default">
+      <image>https://pocket.nytuo.fr/api/files/gpmjfgb6ve1gr0u/mpu0tajwwfvqe6h/snapzy_2026_09_14_13_53_35_858_4rgvrstgsq.png</image>
+    </screenshot>
+    <screenshot>
+      <image>https://pocket.nytuo.fr/api/files/gpmjfgb6ve1gr0u/mpu0tajwwfvqe6h/snapzy_2026_09_14_13_56_25_398_9ps1rkjvfl.png</image>
+    </screenshot>
+    <screenshot>
+      <image>https://pocket.nytuo.fr/api/files/gpmjfgb6ve1gr0u/mpu0tajwwfvqe6h/snapzy_2026_09_14_13_56_10_974_h5cspre6nx.png</image>
+    </screenshot>
+    <screenshot>
+      <image>https://pocket.nytuo.fr/api/files/gpmjfgb6ve1gr0u/mpu0tajwwfvqe6h/snapzy_2026_09_14_13_56_02_551_r7qr5b8gmc.png</image>
+    </screenshot>
+    <screenshot>
+      <image>https://pocket.nytuo.fr/api/files/gpmjfgb6ve1gr0u/mpu0tajwwfvqe6h/snapzy_2026_09_14_13_55_49_629_yblmz4yqcv.png</image>
+    </screenshot>
+    <screenshot>
+      <image>https://pocket.nytuo.fr/api/files/gpmjfgb6ve1gr0u/mpu0tajwwfvqe6h/snapzy_2026_09_14_13_55_33_822_q9cjm4ewcp.png</image>
+    </screenshot>
+    <screenshot>
+      <image>https://pocket.nytuo.fr/api/files/gpmjfgb6ve1gr0u/mpu0tajwwfvqe6h/snapzy_2026_09_14_13_54_06_200_aoiiu0tkp4.png</image>
+    </screenshot>
+    <screenshot>
+      <image>https://pocket.nytuo.fr/api/files/gpmjfgb6ve1gr0u/mpu0tajwwfvqe6h/snapzy_2026_09_14_13_53_53_240_f197g1njrh.png</image>
+    </screenshot>
+    <screenshot>
+      <image>https://pocket.nytuo.fr/api/files/gpmjfgb6ve1gr0u/mpu0tajwwfvqe6h/snapzy_2026_09_14_13_54_32_266_jw1b9qt92r.png</image>
+    </screenshot>
+    <screenshot>
+      <image>https://pocket.nytuo.fr/api/files/gpmjfgb6ve1gr0u/mpu0tajwwfvqe6h/snapzy_2026_09_14_13_55_23_075_lva4k7n9so.png</image>
+    </screenshot>
+  </screenshots>
+
+  <categories>
+    <category>Network</category>
+    <category>RemoteAccess</category>
+  </categories>
+
+  <keywords>
+    <keyword>ssh</keyword>
+    <keyword>sftp</keyword>
+    <keyword>ftp</keyword>
+    <keyword>terminal</keyword>
+  </keywords>
+
+  <branding>
+    <color type="primary" scheme_preference="light">#D1D9E0</color>
+    <color type="primary" scheme_preference="dark">#1B2B3A</color>
+  </branding>
+
   <releases>
-    <release version="0.1.0" date="2026-04-28" />
+    <release version="0.2.0" date="2026-09-13"/>
+    <release version="0.1.0" date="2026-04-28"/>
   </releases>
 </component>

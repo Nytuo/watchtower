@@ -1,6 +1,7 @@
 pub mod commands;
 pub mod error;
 pub mod logging;
+pub mod sandbox;
 pub mod ssh;
 pub mod vault;
 

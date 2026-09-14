@@ -37,7 +37,9 @@ argon2 = "0.5"
 chacha20poly1305 = { version = "0.10", features = ["std"] }
 rand = "0.8"
 zeroize = { version = "1", features = ["derive"] }
-keyring = { version = "3", features = ["apple-native", "windows-native", "linux-native"] }
+# Secret Service only on Linux: the kernel keyring (linux-native) is blocked
+# inside Flatpak and does not survive a reboot anyway.
+keyring = { version = "3", features = ["apple-native", "windows-native", "sync-secret-service", "crypto-rust"] }
 
 # SSH
 russh = "0.46"

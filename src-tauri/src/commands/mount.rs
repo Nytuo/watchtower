@@ -53,6 +53,13 @@ pub async fn mount_check_tool() -> Result<MountToolStatus, AppError> {
     }
     #[cfg(all(unix, not(target_os = "macos")))]
     {
+        if crate::sandbox::is_flatpak() {
+            return Ok(MountToolStatus {
+                available: crate::sandbox::host_has("sshfs").await,
+                tool: "sshfs".into(),
+                hint: crate::sandbox::FLATPAK_HOST_HINT.into(),
+            });
+        }
         Ok(MountToolStatus {
             available: which("sshfs"),
             tool: "sshfs".into(),
@@ -178,7 +185,8 @@ fn default_mount_point(app: &AppHandle, server_name: &str, id: &str) -> Result<P
 #[cfg(unix)]
 async fn create_scratch_dir() -> Result<PathBuf, AppError> {
     use std::os::unix::fs::DirBuilderExt;
-    let scratch = std::env::temp_dir().join(format!("watchtower-mount-{}", uuid::Uuid::new_v4()));
+    let scratch = crate::sandbox::host_visible_temp_dir()
+        .join(format!("watchtower-mount-{}", uuid::Uuid::new_v4()));
     let scratch_clone = scratch.clone();
     tokio::task::spawn_blocking(move || {
         std::fs::DirBuilder::new()
@@ -225,7 +233,7 @@ async fn resolve_known_hosts_lines(
     known_hosts: &[KnownHost],
     policy: HostKeyPolicy,
 ) -> Result<Vec<String>, AppError> {
-    let scan = tokio::process::Command::new("ssh-keyscan")
+    let scan = crate::sandbox::host_command("ssh-keyscan", std::iter::empty::<(&str, &str)>())
         .arg("-p")
         .arg(port.to_string())
         .arg("-T")
@@ -420,7 +428,18 @@ async fn mount_sshfs_inner(
         .open(&stderr_path)
         .map_err(|e| AppError::General(format!("cannot open stderr log: {e}")))?;
 
-    let mut cmd = tokio::process::Command::new("sshfs");
+    let mut spawn_env: Vec<(String, String)> = env
+        .iter()
+        .map(|(k, v)| (k.to_string(), v.display().to_string()))
+        .collect();
+    if !env.is_empty() {
+        spawn_env.push(("SSH_ASKPASS_REQUIRE".into(), "force".into()));
+        if std::env::var_os("DISPLAY").is_none() {
+            spawn_env.push(("DISPLAY".into(), "localhost:0".into()));
+        }
+    }
+
+    let mut cmd = crate::sandbox::host_command("sshfs", spawn_env);
     cmd.arg(format!("{alias}:{remote_path}"))
         .arg(mount_point)
         .arg("-f")
@@ -434,16 +453,6 @@ async fn mount_sshfs_inner(
         .stdout(stdout_file)
         .stderr(stderr_file)
         .process_group(0);
-
-    for (k, v) in &env {
-        cmd.env(k, v);
-    }
-    if !env.is_empty() {
-        cmd.env("SSH_ASKPASS_REQUIRE", "force");
-        if std::env::var_os("DISPLAY").is_none() {
-            cmd.env("DISPLAY", "localhost:0");
-        }
-    }
 
     tracing::info!(?cmd, "spawning sshfs");
     let mut child = cmd.spawn().map_err(|e| {
@@ -710,7 +719,8 @@ async fn force_unmount_path(path: &str) {
     }
     #[cfg(all(unix, not(target_os = "macos")))]
     {
-        let ok = tokio::process::Command::new("fusermount")
+        let no_env = std::iter::empty::<(&str, &str)>;
+        let ok = crate::sandbox::host_command("fusermount", no_env())
             .arg("-u")
             .arg(path)
             .status()
@@ -718,7 +728,7 @@ async fn force_unmount_path(path: &str) {
             .map(|s| s.success())
             .unwrap_or(false);
         if !ok {
-            let _ = tokio::process::Command::new("umount")
+            let _ = crate::sandbox::host_command("umount", no_env())
                 .arg(path)
                 .status()
                 .await;

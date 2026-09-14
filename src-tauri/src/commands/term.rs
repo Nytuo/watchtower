@@ -475,6 +475,7 @@ pub async fn mosh_connect(
             s.advanced.mosh_port_range.as_deref(),
         )
     };
+    let argv = crate::sandbox::host_argv(argv);
     pty_connect(argv, None, cols, rows, on_data, on_log, session_state).await
 }
 
