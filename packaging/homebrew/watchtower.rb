@@ -21,8 +21,9 @@ cask "watchtower" do
   app "Watchtower.app"
 
   # The app is not notarized, so Gatekeeper would otherwise refuse to open it.
-  postflight_steps do
-    run "/usr/bin/xattr", args: ["-dr", "com.apple.quarantine", "{{appdir}}/Watchtower.app"]
+  postflight do
+    system_command "/usr/bin/xattr",
+                   args: ["-dr", "com.apple.quarantine", "#{appdir}/Watchtower.app"]
   end
 
   zap trash: [
