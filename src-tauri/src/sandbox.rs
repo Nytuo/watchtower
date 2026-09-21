@@ -13,6 +13,40 @@ use tokio::process::Command;
 
 pub const FLATPAK_HOST_HINT: &str = "Watchtower runs in a Flatpak sandbox: install it on your system, then allow Watchtower to run host commands — in Flatseal (Session Bus → Talk → org.freedesktop.Flatpak) or with `flatpak override --user --talk-name=org.freedesktop.Flatpak fr.nytuo.watchtower`.";
 
+/// GUI launches (Finder/Dock/launchd) don't inherit the shell's PATH, so tools
+/// installed by Homebrew/MacPorts/Nix (sshfs, mosh, ...) are invisible to the
+/// bundled app. Append the usual locations once at startup, before any threads
+/// read the environment.
+pub fn augment_path() {
+    #[cfg(unix)]
+    {
+        let extra = [
+            "/opt/homebrew/bin",
+            "/opt/homebrew/sbin",
+            "/usr/local/bin",
+            "/usr/local/sbin",
+            "/opt/local/bin",
+            "/run/current-system/sw/bin",
+            "/usr/bin",
+            "/bin",
+            "/usr/sbin",
+            "/sbin",
+        ];
+        let mut paths: Vec<PathBuf> = std::env::var_os("PATH")
+            .map(|p| std::env::split_paths(&p).collect())
+            .unwrap_or_default();
+        for dir in extra {
+            let dir = PathBuf::from(dir);
+            if !paths.contains(&dir) {
+                paths.push(dir);
+            }
+        }
+        if let Ok(joined) = std::env::join_paths(paths) {
+            std::env::set_var("PATH", joined);
+        }
+    }
+}
+
 pub fn is_flatpak() -> bool {
     std::path::Path::new("/.flatpak-info").exists()
 }
