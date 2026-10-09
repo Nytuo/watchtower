@@ -1,4 +1,5 @@
 import { invoke, Channel } from "@tauri-apps/api/core";
+import { isMobile } from "@/lib/platform";
 
 export { invoke, Channel };
 
@@ -326,11 +327,23 @@ export const biometricAvailable = (vaultPath: string) =>
 export const biometricHas = (vaultPath: string) =>
   invoke<boolean>("biometric_has", { vaultPath });
 
-export const biometricStore = (vaultPath: string, password: string) =>
-  invoke("biometric_store", { vaultPath, password });
+export const biometricStore = async (vaultPath: string, password: string) => {
+  await biometricGate("Remember your vault password on this device");
+  return invoke("biometric_store", { vaultPath, password });
+};
 
-export const biometricRetrieve = (vaultPath: string) =>
-  invoke<string | null>("biometric_retrieve", { vaultPath });
+async function biometricGate(reason: string) {
+  if (!isMobile) return;
+  const { authenticate } = await import("@tauri-apps/plugin-biometric");
+  await authenticate(reason, { allowDeviceCredential: true });
+}
+
+export const biometricRetrieve = async (vaultPath: string) => {
+  if (isMobile && !(await biometricHas(vaultPath).catch(() => false)))
+    return null;
+  await biometricGate("Unlock your Watchtower vault");
+  return invoke<string | null>("biometric_retrieve", { vaultPath });
+};
 
 export const biometricClear = (vaultPath: string) =>
   invoke("biometric_clear", { vaultPath });
@@ -896,3 +909,102 @@ export const sftpDownloadRecursive = (
     localDestDir,
     onProgress,
   });
+
+export interface LanPeer {
+  id: string;
+  label: string;
+  confirmed: boolean;
+  last_sync: number | null;
+}
+
+export interface LanStatus {
+  running: boolean;
+  port: number;
+  fingerprint: string;
+  label: string;
+  pairing_open: boolean;
+  pending_password: boolean;
+  discovery_error: string | null;
+  seen_total: number;
+  last_seen: number | null;
+  peers: LanPeer[];
+}
+
+export interface LanNearby {
+  peer_id: string | null;
+  label: string | null;
+  pairing: boolean;
+  addrs: string[];
+}
+
+export interface LanPairOffer {
+  kind: "qr" | "code";
+  qr_text: string | null;
+  qr_svg: string | null;
+  code: string | null;
+  addrs: string[];
+  expires_in: number;
+}
+
+export interface LanPairResult {
+  peer_id: string;
+  label: string;
+  sas: string;
+}
+
+export type LanOutcome =
+  | "up_to_date"
+  | "merged"
+  | "needs_password"
+  | "different_vault"
+  | "imported"
+  | "served";
+
+export type LanEvent =
+  | { kind: "pair"; data: { peer_id: string; label: string; sas: string } }
+  | { kind: "synced"; data: { peer: string; outcome: LanOutcome } }
+  | { kind: "nearby"; data: null };
+
+export const lanStatus = () => invoke<LanStatus>("lan_status");
+export const lanStart = (label?: string) =>
+  invoke<LanStatus>("lan_start", { label });
+export const lanStop = () => invoke<void>("lan_stop");
+export const lanNearby = () => invoke<LanNearby[]>("lan_nearby");
+export const lanSetLabel = (label: string) =>
+  invoke<void>("lan_set_label", { label });
+export const lanPairOffer = (kind: "qr" | "code") =>
+  invoke<LanPairOffer>("lan_pair_offer", { kind });
+export const lanPairCancel = () => invoke<void>("lan_pair_cancel");
+export const lanPairJoin = (input: string, addr?: string) =>
+  invoke<LanPairResult>("lan_pair_join", { input, addr });
+export const lanPairConfirm = (peerId: string, accept: boolean) =>
+  invoke<void>("lan_pair_confirm", { peerId, accept });
+export const lanForget = (peerId?: string) =>
+  invoke<void>("lan_forget", { peerId });
+export const lanSync = (
+  peerId: string,
+  addr?: string,
+  mergeForeign?: boolean,
+) => invoke<LanOutcome>("lan_sync", { peerId, addr, mergeForeign });
+export const lanPullVault = (peerId: string, addr?: string) =>
+  invoke<LanOutcome>("lan_pull_vault", { peerId, addr });
+export const lanApplyPending = (password: string) =>
+  invoke<LanOutcome>("lan_apply_pending", { password });
+export const lanDiscardPending = () => invoke<void>("lan_discard_pending");
+
+export const mobileKeepalive = (active: boolean, sessions: number) =>
+  invoke<void>("mobile_keepalive", { active, sessions });
+
+export const sftpReadText = (sessionId: string, remotePath: string) =>
+  invoke<string>("sftp_read_text", { sessionId, remotePath });
+
+export const sftpWriteText = (
+  sessionId: string,
+  remotePath: string,
+  content: string,
+) => invoke<void>("sftp_write_text", { sessionId, remotePath, content });
+
+export const sftpRealpath = (sessionId: string, path: string) =>
+  invoke<string>("sftp_realpath", { sessionId, path });
+
+export const localDownloadsDir = () => invoke<string>("local_downloads_dir");

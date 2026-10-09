@@ -56,6 +56,7 @@ export function AppDialogs() {
             <Input
               ref={inputRef}
               value={value}
+              type={current.secret ? "password" : "text"}
               placeholder={current.placeholder}
               onChange={(e) => setValue(e.target.value)}
               onKeyDown={(e) => {

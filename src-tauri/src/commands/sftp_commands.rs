@@ -693,3 +693,90 @@ fn download_recursive<'a>(
         Ok(())
     })
 }
+
+const MAX_EDIT_BYTES: u64 = 2 * 1024 * 1024;
+
+#[tauri::command]
+pub async fn sftp_read_text(
+    session_id: String,
+    remote_path: String,
+    session_state: State<'_, SharedSessionManager>,
+) -> Result<String, AppError> {
+    let manager = session_state.lock().await;
+    let session = manager
+        .sessions
+        .get(&session_id)
+        .ok_or_else(|| AppError::Ssh(format!("Session '{}' not found", session_id)))?;
+    let sftp = session.get_sftp().await?;
+
+    let size = sftp
+        .metadata(&remote_path)
+        .await
+        .map_err(|e| AppError::Ssh(format!("Failed to stat remote file: {}", e)))?
+        .size
+        .unwrap_or(0);
+    if size > MAX_EDIT_BYTES {
+        return Err(AppError::Ssh(format!(
+            "File is too large to edit here ({} KiB, limit {} KiB)",
+            size / 1024,
+            MAX_EDIT_BYTES / 1024
+        )));
+    }
+    let mut f = sftp
+        .open(&remote_path)
+        .await
+        .map_err(|e| AppError::Ssh(format!("Failed to open remote file: {}", e)))?;
+    let mut buf = Vec::with_capacity(size as usize);
+    f.read_to_end(&mut buf)
+        .await
+        .map_err(|e| AppError::Ssh(format!("Failed to read remote file: {}", e)))?;
+    String::from_utf8(buf).map_err(|_| AppError::Ssh("This is not a UTF-8 text file".into()))
+}
+
+#[tauri::command]
+pub async fn sftp_write_text(
+    session_id: String,
+    remote_path: String,
+    content: String,
+    session_state: State<'_, SharedSessionManager>,
+) -> Result<(), AppError> {
+    if content.len() as u64 > MAX_EDIT_BYTES {
+        return Err(AppError::Ssh(
+            "Content is too large to save from here".into(),
+        ));
+    }
+    let manager = session_state.lock().await;
+    let session = manager
+        .sessions
+        .get(&session_id)
+        .ok_or_else(|| AppError::Ssh(format!("Session '{}' not found", session_id)))?;
+    let sftp = session.get_sftp().await?;
+    let mut f = sftp
+        .create(&remote_path)
+        .await
+        .map_err(|e| AppError::Ssh(format!("Failed to open remote file for writing: {}", e)))?;
+    f.write_all(content.as_bytes())
+        .await
+        .map_err(|e| AppError::Ssh(format!("Failed to write remote file: {}", e)))?;
+    f.shutdown()
+        .await
+        .map_err(|e| AppError::Ssh(format!("Failed to finish writing: {}", e)))?;
+    Ok(())
+}
+
+#[tauri::command]
+pub async fn sftp_realpath(
+    session_id: String,
+    path: String,
+    session_state: State<'_, SharedSessionManager>,
+) -> Result<String, AppError> {
+    let manager = session_state.lock().await;
+    let session = manager
+        .sessions
+        .get(&session_id)
+        .ok_or_else(|| AppError::Ssh(format!("Session '{}' not found", session_id)))?;
+    let sftp = session.get_sftp().await?;
+    sftp.canonicalize(&path)
+        .await
+        .map_err(|e| AppError::Ssh(format!("Failed to resolve path: {}", e)))
+}

@@ -12,6 +12,8 @@ import {
   biometricStore,
   biometricRetrieve,
 } from "@/lib/tauri";
+import { isMobile } from "@/lib/platform";
+import { LanSyncPanel } from "@/components/vault/lan-sync-panel";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
@@ -25,9 +27,10 @@ import {
   ArrowLeft,
   ChevronRight,
   Fingerprint,
+  Radio,
 } from "lucide-react";
 
-type Mode = "main" | "create" | "switch";
+type Mode = "main" | "create" | "switch" | "pull";
 
 const RECENT_VAULT_KEY = "watchtower:recent_vault_path";
 const RECENT_VAULTS_KEY = "watchtower:recent_vaults";
@@ -93,6 +96,14 @@ export function VaultPage() {
   const [remember, setRemember] = useState(false);
   const [bioAvailable, setBioAvailable] = useState(false);
   const [bioMessage, setBioMessage] = useState<string | null>(null);
+
+  useEffect(() => {
+    if (isMobile && mode === "create" && !createPath) {
+      vaultDefaultPath()
+        .then(setCreatePath)
+        .catch(() => {});
+    }
+  }, [mode, createPath]);
 
   const recentPaths = getRecentPaths().filter((p) => p !== targetPath);
 
@@ -248,18 +259,50 @@ export function VaultPage() {
       ? !!targetPath && !targetInvalid
       : !passwordMismatch && !tooShort && confirmPassword.length > 0 && !!createPath);
 
+  if (mode === "pull") {
+    return (
+      <div className="flex h-full w-full flex-col bg-background">
+        <button
+          type="button"
+          onClick={async () => {
+            setMode("switch");
+            const p = await resolveTargetVault();
+            if (p) setTargetPath(p);
+          }}
+          className="flex items-center gap-1 px-4 py-3 text-sm text-muted-foreground"
+        >
+          <ArrowLeft className="h-4 w-4" /> Back
+        </button>
+        <div className="min-h-0 flex-1">
+          <LanSyncPanel
+            pullMode
+            onImported={async () => {
+              const p = await resolveTargetVault();
+              setTargetPath(p);
+              setMode("main");
+            }}
+          />
+        </div>
+      </div>
+    );
+  }
+
   if (mode === "create") {
     return (
       <VaultLayout
         back={() => reset("switch")}
         title="Create Vault"
-        description="Choose a location and set a master password to protect your servers and credentials."
+        description={
+          isMobile
+            ? "Set a master password to protect your servers and credentials."
+            : "Choose a location and set a master password to protect your servers and credentials."
+        }
       >
         <form
           onSubmit={handleSubmit}
           className="space-y-5 w-full max-w-xs mx-auto"
         >
-          <div className="space-y-2">
+          <div className={isMobile ? "hidden" : "space-y-2"}>
             <Label>Vault location</Label>
             <button
               type="button"
@@ -351,14 +394,23 @@ export function VaultPage() {
             onClick={() => reset("create")}
           />
 
+          {!isMobile && (
+            <ChoiceButton
+              icon={<FolderOpen className="h-4 w-4" />}
+              label="Open vault file"
+              description="Browse for an existing .watchtower file"
+              onClick={handleBrowseForVault}
+            />
+          )}
+
           <ChoiceButton
-            icon={<FolderOpen className="h-4 w-4" />}
-            label="Open vault file"
-            description="Browse for an existing .watchtower file"
-            onClick={handleBrowseForVault}
+            icon={<Radio className="h-4 w-4" />}
+            label="Get vault from another device"
+            description="Pair over your local network — no server involved"
+            onClick={() => reset("pull")}
           />
 
-          {recentPaths.length > 0 && (
+          {!isMobile && recentPaths.length > 0 && (
             <>
               <div className="border-t border-border my-1" />
               <p className="text-xs text-muted-foreground px-1">Recent</p>
@@ -391,7 +443,7 @@ export function VaultPage() {
             <div className="font-medium truncate">
               {targetPath ? fileNameOf(targetPath) : "No vault selected"}
             </div>
-            {targetPath && (
+            {targetPath && !isMobile && (
               <div className="text-xs text-muted-foreground truncate">
                 {targetPath}
               </div>
@@ -452,7 +504,7 @@ export function VaultPage() {
             )}
           </Button>
 
-          <div className="flex justify-center">
+          <div className={isMobile ? "hidden" : "flex justify-center"}>
             <button
               type="button"
               className="text-xs text-muted-foreground underline hover:text-foreground"

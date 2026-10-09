@@ -155,6 +155,34 @@ pub fn decrypt(data: &[u8], password: &str) -> AppResult<(Vec<u8>, Kdf, Zeroizin
     Ok((plaintext, kdf, key))
 }
 
+pub fn header_salt(data: &[u8]) -> Option<[u8; 16]> {
+    if data.len() < HEADER_SIZE || &data[0..4] != VAULT_MAGIC {
+        return None;
+    }
+    let mut salt = [0u8; 16];
+    salt.copy_from_slice(&data[5..21]);
+    Some(salt)
+}
+
+pub fn decrypt_with_key(data: &[u8], key: &[u8; 32]) -> AppResult<Vec<u8>> {
+    if data.len() < HEADER_SIZE || &data[0..4] != VAULT_MAGIC || data[4] != VAULT_VERSION_V2 {
+        return Err(AppError::Crypto("Unsupported vault data".into()));
+    }
+    let cipher = XChaCha20Poly1305::new_from_slice(key)
+        .map_err(|e| AppError::Crypto(format!("Cipher init error: {}", e)))?;
+    cipher
+        .decrypt(
+            XNonce::from_slice(&data[21..45]),
+            Payload {
+                msg: &data[HEADER_SIZE..],
+                aad: &data[..HEADER_SIZE],
+            },
+        )
+        .map_err(|_| {
+            AppError::Crypto("Decryption failed — different password or corrupted vault".into())
+        })
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

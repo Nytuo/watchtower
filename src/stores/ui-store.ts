@@ -9,6 +9,7 @@ type Panel =
   | "port-forwarding"
   | "known-hosts"
   | "import"
+  | "lan-sync"
   | "settings"
   | null;
 export type ActiveView = "home" | "terminal" | "sftp" | "ftp";

@@ -54,3 +54,23 @@ pub fn local_ls(path: String) -> Result<Vec<LocalFileEntry>, AppError> {
 
     Ok(result)
 }
+
+/// Where mobile downloads land: iOS `Documents` (shown in the Files app via
+/// UIFileSharingEnabled), otherwise a folder inside the app's private data.
+#[tauri::command]
+pub fn local_downloads_dir(app: tauri::AppHandle) -> Result<String, AppError> {
+    use tauri::Manager;
+    #[cfg(target_os = "ios")]
+    let base = app
+        .path()
+        .document_dir()
+        .map_err(|e| AppError::General(e.to_string()))?;
+    #[cfg(not(target_os = "ios"))]
+    let base = app
+        .path()
+        .app_data_dir()
+        .map_err(|e| AppError::General(e.to_string()))?
+        .join("downloads");
+    std::fs::create_dir_all(&base)?;
+    Ok(base.to_string_lossy().to_string())
+}

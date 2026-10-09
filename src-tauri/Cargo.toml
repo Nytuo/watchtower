@@ -15,7 +15,6 @@ tauri-build = { version = "2", features = [] }
 tauri = { version = "2", features = [] }
 tauri-plugin-dialog = "2"
 tauri-plugin-fs = "2"
-tauri-plugin-shell = "2"
 tauri-plugin-store = "2"
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
@@ -27,10 +26,10 @@ futures = "0.3"
 
 # Logging
 tracing = "0.1"
-tracing-subscriber = { version = "0.3", features = ["env-filter", "time", "local-time"] }
+tracing-subscriber = { version = "0.3", features = ["env-filter", "time"] }
 tracing-appender = "0.2"
 tracing-log = "0.2"
-time = { version = "0.3", features = ["formatting", "local-offset"] }
+time = { version = "0.3", features = ["formatting"] }
 
 # Crypto
 argon2 = "0.5"
@@ -60,11 +59,22 @@ sha2 = "0.10"
 hmac = "0.12"
 tauri-plugin-deep-link = "2"
 
-# Telnet / Mosh / FTP
-portable-pty = "0.8"
+# Telnet / FTP
 suppaftp = { version = "6", default-features = false, features = ["rustls"] }
 rustls = "0.23"
 webpki-roots = "0.26"
+snow = { version = "0.10", default-features = false, features = ["default-resolver", "use-curve25519", "use-chacha20poly1305", "use-sha2", "use-getrandom", "std"] }
+spake2 = "0.4"
+qrcode = { version = "0.14.1", default-features = false, features = ["svg"] }
+if-addrs = "0.15.0"
+
+[target.'cfg(not(any(target_os = "android", target_os = "ios")))'.dependencies]
+# Local-time log stamps; num_threads (pulled by local-offset) does not build on iOS.
+tracing-subscriber = { version = "0.3", features = ["local-time"] }
+time = { version = "0.3", features = ["local-offset"] }
+mdns-sd = "0.21.5"
+portable-pty = "0.8"
+tauri-plugin-shell = "2"
 
 [target.'cfg(unix)'.dependencies]
 libc = "0.2"
@@ -76,3 +86,8 @@ path = "src/bin/wt.rs"
 [[bin]]
 name = "watchtower"
 path = "src/main.rs"
+
+[target.'cfg(any(target_os = "android", target_os = "ios"))'.dependencies]
+tauri-plugin-barcode-scanner = "2"
+tauri-plugin-biometric = "2"
+tauri-plugin-wt-native = { path = "plugins/tauri-plugin-wt-native" }

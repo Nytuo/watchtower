@@ -14,6 +14,7 @@ import {
   Fingerprint,
   Settings,
   DownloadCloud,
+  Radio,
 } from "lucide-react";
 
 const panelButtons = [
@@ -28,6 +29,7 @@ const panelButtons = [
   },
   { panel: "known-hosts" as const, icon: Fingerprint, k: "nav.knownHosts" },
   { panel: "import" as const, icon: DownloadCloud, k: "nav.import" },
+  { panel: "lan-sync" as const, icon: Radio, k: "nav.syncNearby" },
   { panel: "settings" as const, icon: Settings, k: "nav.settings" },
 ] as const;
 

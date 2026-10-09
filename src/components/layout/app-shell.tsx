@@ -11,6 +11,7 @@ import { KeychainManager } from "@/components/vault/keychain-manager";
 import { PortForwardingPanel } from "@/components/vault/port-forwarding-panel";
 import { KnownHostsViewer } from "@/components/vault/known-hosts-viewer";
 import { ImportPanel } from "@/components/vault/import-panel";
+import { LanSyncPanel } from "@/components/vault/lan-sync-panel";
 import { SettingsPanel } from "@/components/vault/settings-panel";
 
 interface AppShellProps {
@@ -25,6 +26,7 @@ const PANEL_COMPONENTS: Record<string, React.ComponentType> = {
   "port-forwarding": PortForwardingPanel,
   "known-hosts": KnownHostsViewer,
   import: ImportPanel,
+  "lan-sync": LanSyncPanel,
   settings: SettingsPanel,
 };
 

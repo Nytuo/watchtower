@@ -23,6 +23,7 @@ const en: Dict = {
   "nav.portForwarding": "Port forwarding",
   "nav.knownHosts": "Known hosts",
   "nav.import": "Import",
+  "nav.syncNearby": "Sync nearby",
   "nav.settings": "Settings",
 
   "action.connect": "Connect",

@@ -3,6 +3,7 @@ pub mod error;
 pub mod logging;
 pub mod sandbox;
 pub mod ssh;
+pub mod lan;
 pub mod vault;
 
 use std::sync::Mutex;
@@ -26,13 +27,21 @@ use crate::vault::store::VaultState;
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
     sandbox::augment_path();
-    tauri::Builder::default()
+    let builder = tauri::Builder::default();
+    #[cfg(desktop)]
+    let builder = builder.plugin(tauri_plugin_shell::init());
+    #[cfg(mobile)]
+    let builder = builder
+        .plugin(tauri_plugin_barcode_scanner::init())
+        .plugin(tauri_plugin_biometric::init())
+        .plugin(tauri_plugin_wt_native::init());
+    builder
         .plugin(tauri_plugin_dialog::init())
         .plugin(tauri_plugin_fs::init())
-        .plugin(tauri_plugin_shell::init())
         .plugin(tauri_plugin_store::Builder::default().build())
         .plugin(tauri_plugin_deep_link::init())
         .manage(Mutex::new(VaultState::new()))
+        .manage::<lan::service::SharedLan>(lan::service::new_shared())
         .manage(tokio::sync::Mutex::new(SessionManager::new()))
         .manage::<sftp_commands::SharedTransferFlags>(Mutex::new(std::collections::HashMap::new()))
         .manage::<ssh_commands::SharedKbd>(
@@ -67,6 +76,20 @@ pub fn run() {
             sync::sync_status,
             sync::sync_push,
             sync::sync_pull,
+            lan::service::lan_status,
+            lan::service::lan_start,
+            lan::service::lan_stop,
+            lan::service::lan_nearby,
+            lan::service::lan_set_label,
+            lan::service::lan_pair_offer,
+            lan::service::lan_pair_cancel,
+            lan::service::lan_pair_join,
+            lan::service::lan_pair_confirm,
+            lan::service::lan_forget,
+            lan::service::lan_sync,
+            lan::service::lan_pull_vault,
+            lan::service::lan_apply_pending,
+            lan::service::lan_discard_pending,
             cloud::cloud_list_digitalocean,
             cloud::cloud_list_aws,
             cloud::cloud_list_azure,
@@ -148,23 +171,34 @@ pub fn run() {
             sftp_commands::sftp_chmod,
             sftp_commands::sftp_copy,
             sftp_commands::sftp_cancel_transfer,
+            sftp_commands::sftp_read_text,
+            sftp_commands::sftp_write_text,
+            sftp_commands::sftp_realpath,
             tunnel_commands::tunnel_start,
             tunnel_commands::tunnel_stop,
             tunnel_commands::tunnel_list,
             tunnel_commands::tunnel_list_all,
             local_fs::local_home,
             local_fs::local_ls,
+            local_fs::local_downloads_dir,
             biometric::biometric_available,
             biometric::biometric_has,
             biometric::biometric_store,
             biometric::biometric_retrieve,
             biometric::biometric_clear,
+            biometric::mobile_keepalive,
         ])
         .setup(|app| {
             use tauri::Manager;
             let guard = logging::init(app.handle());
             app.manage(guard);
             tracing::info!(version = env!("CARGO_PKG_VERSION"), "Watchtower starting");
+
+            #[cfg(mobile)]
+            if let Ok(dir) = app.path().app_data_dir() {
+                let _ = std::fs::create_dir_all(&dir);
+                let _ = vault::store::MOBILE_DATA_DIR.set(dir);
+            }
 
             {
                 let handle = app.handle().clone();

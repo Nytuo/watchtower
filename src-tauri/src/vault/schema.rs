@@ -11,6 +11,8 @@ pub struct VaultData {
     pub known_hosts: Vec<KnownHost>,
     pub port_forwardings: Vec<PortForwardingRule>,
     pub settings: VaultSettings,
+    #[serde(default)]
+    pub sync_meta: super::meta::SyncMeta,
 }
 
 impl Default for VaultData {
@@ -24,6 +26,7 @@ impl Default for VaultData {
             known_hosts: Vec::new(),
             port_forwardings: Vec::new(),
             settings: VaultSettings::default(),
+            sync_meta: Default::default(),
         }
     }
 }

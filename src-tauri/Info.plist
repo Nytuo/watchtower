@@ -3,11 +3,12 @@
 <plist version="1.0">
 <dict>
     <key>NSLocalNetworkUsageDescription</key>
-    <string>Watchtower connects to servers on your local network over SSH, SFTP and network-drive mounts.</string>
+    <string>Watchtower connects to servers on your local network over SSH, SFTP and network-drive mounts, and syncs your encrypted vault with devices you paired.</string>
     <key>NSBonjourServices</key>
     <array>
         <string>_ssh._tcp</string>
         <string>_sftp-ssh._tcp</string>
+        <string>_watchtower-sync._tcp</string>
     </array>
 </dict>
 </plist>

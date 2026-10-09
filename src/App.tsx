@@ -14,6 +14,11 @@ import { useAutoLock } from "@/hooks/use-auto-lock";
 import { useConnectionMonitor } from "@/hooks/use-connection-monitor";
 import { useDeepLink } from "@/hooks/use-deep-link";
 import { useSync } from "@/hooks/use-sync";
+import { MobileShell } from "@/components/mobile/mobile-shell";
+import { isMobile } from "@/lib/platform";
+import { useKeepAlive } from "@/hooks/use-keepalive";
+import { useViewportHeight } from "@/hooks/use-viewport-height";
+import { useVaultChanged } from "@/hooks/use-vault-changed";
 import { cleanupStaleEditFiles } from "@/lib/cleanup-temp-edits";
 
 export default function App() {
@@ -22,6 +27,9 @@ export default function App() {
   useConnectionMonitor();
   useDeepLink();
   useSync();
+  useVaultChanged();
+  useViewportHeight();
+  useKeepAlive();
 
   useEffect(() => {
     checkVaultExists();
@@ -41,10 +49,14 @@ export default function App() {
   return (
     <>
       <ServerForm />
-      <AppShell>
-        <TerminalPage />
-      </AppShell>
-      <CommandPalette />
+      {isMobile ? (
+        <MobileShell />
+      ) : (
+        <AppShell>
+          <TerminalPage />
+        </AppShell>
+      )}
+      {!isMobile && <CommandPalette />}
       <SnippetRunDialog />
       <ShortcutsDialog />
       <KbdPromptDialog />

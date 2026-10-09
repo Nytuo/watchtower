@@ -16,6 +16,7 @@ interface PromptReq {
   message?: string;
   defaultValue?: string;
   placeholder?: string;
+  secret?: boolean;
   resolve: (value: string | null) => void;
 }
 

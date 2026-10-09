@@ -1,7 +1,9 @@
+#[cfg(desktop)]
 use std::io::{Read, Write};
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Arc;
 
+#[cfg(desktop)]
 use portable_pty::{native_pty_system, CommandBuilder, MasterPty, PtySize};
 use tauri::ipc::Channel;
 use tauri::State;
@@ -240,6 +242,7 @@ pub async fn telnet_connect(
 
 // ---------------- PTY subprocess (mosh, local) ----------------
 
+#[cfg(desktop)]
 #[tauri::command]
 #[allow(clippy::too_many_arguments)]
 pub async fn pty_connect(
@@ -448,6 +451,7 @@ pub async fn term_stop_log(
     Ok(())
 }
 
+#[cfg(desktop)]
 #[tauri::command]
 pub async fn mosh_connect(
     server_id: String,
@@ -479,6 +483,7 @@ pub async fn mosh_connect(
     pty_connect(argv, None, cols, rows, on_data, on_log, session_state).await
 }
 
+#[cfg(desktop)]
 pub fn build_mosh_argv(
     host: &str,
     port: u16,
@@ -501,4 +506,34 @@ pub fn build_mosh_argv(
     }
     argv.push(target);
     argv
+}
+
+// Local PTYs and mosh need host binaries that mobile OSes do not allow.
+#[cfg(mobile)]
+#[tauri::command]
+#[allow(clippy::too_many_arguments)]
+pub async fn pty_connect(
+    _argv: Vec<String>,
+    _cwd: Option<String>,
+    _cols: u16,
+    _rows: u16,
+    _on_data: Channel<Vec<u8>>,
+    _on_log: Channel<ConnectionLog>,
+    _session_state: State<'_, SharedSessionManager>,
+) -> Result<String, AppError> {
+    Err(AppError::General(
+        "Local terminals are not available on mobile".into(),
+    ))
+}
+
+#[cfg(mobile)]
+#[tauri::command]
+pub async fn mosh_connect(
+    _server_id: String,
+    _cols: u16,
+    _rows: u16,
+    _on_data: Channel<Vec<u8>>,
+    _on_log: Channel<ConnectionLog>,
+) -> Result<String, AppError> {
+    Err(AppError::General("Mosh is not available on mobile".into()))
 }

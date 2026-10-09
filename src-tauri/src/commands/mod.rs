@@ -4,6 +4,10 @@ pub mod ftp;
 pub mod import_export;
 pub mod keygen;
 pub mod local_fs;
+#[cfg(desktop)]
+pub mod mount;
+#[cfg(mobile)]
+#[path = "mount_stub.rs"]
 pub mod mount;
 pub mod sftp_commands;
 pub mod ssh_commands;

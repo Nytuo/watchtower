@@ -111,6 +111,7 @@ export function CommandPalette() {
       panel("keychains", "Keychain", KeyRound),
       panel("port-forwarding", "Tunnels", ArrowRightLeft),
       panel("known-hosts", "Known hosts", Fingerprint),
+      panel("lan-sync", "Sync nearby", ArrowRightLeft),
       panel("settings", "Settings", Settings),
       {
         cat: "action",

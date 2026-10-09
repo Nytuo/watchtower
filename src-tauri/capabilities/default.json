@@ -2,7 +2,9 @@
   "$schema": "../gen/schemas/desktop-schema.json",
   "identifier": "default",
   "description": "Capability for the main window",
-  "windows": ["main"],
+  "windows": [
+    "main"
+  ],
   "permissions": [
     "core:default",
     "dialog:default",
@@ -20,19 +22,49 @@
     "core:window:allow-set-size",
     {
       "identifier": "fs:allow-stat",
-      "allow": [{ "path": "$TEMP/**" }, { "path": "$TEMP/watchtower-edit/**" }]
+      "allow": [
+        {
+          "path": "$TEMP/**"
+        },
+        {
+          "path": "$TEMP/watchtower-edit/**"
+        }
+      ]
     },
     {
       "identifier": "fs:allow-mkdir",
-      "allow": [{ "path": "$TEMP/**" }, { "path": "$TEMP/watchtower-edit/**" }]
+      "allow": [
+        {
+          "path": "$TEMP/**"
+        },
+        {
+          "path": "$TEMP/watchtower-edit/**"
+        }
+      ]
     },
     {
       "identifier": "fs:allow-read-dir",
-      "allow": [{ "path": "$TEMP/watchtower-edit" }, { "path": "$TEMP/watchtower-edit/**" }]
+      "allow": [
+        {
+          "path": "$TEMP/watchtower-edit"
+        },
+        {
+          "path": "$TEMP/watchtower-edit/**"
+        }
+      ]
     },
     {
       "identifier": "fs:allow-remove",
-      "allow": [{ "path": "$TEMP/watchtower-edit/**" }]
+      "allow": [
+        {
+          "path": "$TEMP/watchtower-edit/**"
+        }
+      ]
     }
+  ],
+  "platforms": [
+    "macOS",
+    "windows",
+    "linux"
   ]
 }

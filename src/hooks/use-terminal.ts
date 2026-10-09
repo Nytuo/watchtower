@@ -5,6 +5,8 @@ import { WebLinksAddon } from "@xterm/addon-web-links";
 import { SearchAddon } from "@xterm/addon-search";
 import { Unicode11Addon } from "@xterm/addon-unicode11";
 import { WebglAddon } from "@xterm/addon-webgl";
+import { isMobile } from "@/lib/platform";
+import { applyMods } from "@/stores/mobile-store";
 import {
   sshConnect,
   sshConnectAdhoc,
@@ -249,13 +251,21 @@ export function useTerminal({ sessionId, server }: UseTerminalOptions) {
     container.innerHTML = "";
     term.open(container);
 
-    try {
-      const webgl = new WebglAddon();
-      webgl.onContextLoss(() => webgl.dispose());
-      term.loadAddon(webgl);
-    } catch {
-      /* fall back to the DOM renderer */
+    if (!isMobile) {
+      try {
+        const webgl = new WebglAddon();
+        webgl.onContextLoss(() => webgl.dispose());
+        term.loadAddon(webgl);
+      } catch {
+        /* fall back to the DOM renderer */
+      }
     }
+
+    const onKeyRow = (e: Event) => {
+      const d = (e as CustomEvent<{ sessionId: string; data: string }>).detail;
+      if (d?.sessionId === sessionId) term.input(d.data, true);
+    };
+    window.addEventListener("wt-term-input", onKeyRow);
 
     termRef.current = term;
     fitAddonRef.current = fitAddon;
@@ -513,6 +523,7 @@ export function useTerminal({ sessionId, server }: UseTerminalOptions) {
 
         term.onData((data: string) => {
           if (disposed) return;
+          if (isMobile) data = applyMods(data);
           const bytes = Array.from(new TextEncoder().encode(data));
           if (useUiStore.getState().broadcastInput) {
             const targets = useSessionStore
@@ -572,6 +583,7 @@ export function useTerminal({ sessionId, server }: UseTerminalOptions) {
         useKbdStore.getState().setPending(null);
       }
       container.removeEventListener("contextmenu", onContextMenu);
+      window.removeEventListener("wt-term-input", onKeyRow);
       term.dispose();
       termRef.current = null;
       fitAddonRef.current = null;

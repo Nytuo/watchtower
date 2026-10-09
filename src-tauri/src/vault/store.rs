@@ -55,8 +55,8 @@ pub fn create_vault(
 ) -> AppResult<(VaultData, Kdf, Zeroizing<[u8; 32]>)> {
     let kdf = Kdf::new_random();
     let key = crypto::derive_key(password, &kdf)?;
-    let data = VaultData::default();
-    save_vault(path, &kdf, &key, &data)?;
+    let mut data = VaultData::default();
+    save_vault(path, &kdf, &key, &mut data)?;
     Ok((data, kdf, key))
 }
 
@@ -79,7 +79,8 @@ pub fn open_vault(path: &Path, password: &str) -> AppResult<(VaultData, Kdf, Zer
     Ok((data, kdf, key))
 }
 
-pub fn save_vault(path: &Path, kdf: &Kdf, key: &[u8; 32], data: &VaultData) -> AppResult<()> {
+pub fn save_vault(path: &Path, kdf: &Kdf, key: &[u8; 32], data: &mut VaultData) -> AppResult<()> {
+    super::meta::touch(data, &kdf.salt);
     let json = Zeroizing::new(serde_json::to_vec(data)?);
     let encrypted = crypto::encrypt(&json, kdf, key)?;
 
@@ -146,4 +147,15 @@ fn dirs_default() -> PathBuf {
         let home = std::env::var("HOME").unwrap_or_else(|_| "/tmp".into());
         PathBuf::from(home).join(".config")
     }
+    #[cfg(mobile)]
+    {
+        MOBILE_DATA_DIR
+            .get()
+            .cloned()
+            .unwrap_or_else(|| PathBuf::from("."))
+    }
 }
+
+/// App-private data directory on Android/iOS, registered once at startup.
+#[cfg(mobile)]
+pub static MOBILE_DATA_DIR: std::sync::OnceLock<PathBuf> = std::sync::OnceLock::new();

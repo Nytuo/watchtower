@@ -59,9 +59,12 @@ pub async fn vault_lock(
     state: State<'_, SharedVaultState>,
     session_state: State<'_, SharedSessionManager>,
     mounts: State<'_, mount::SharedMounts>,
+    lan: State<'_, crate::lan::service::SharedLan>,
 ) -> Result<(), AppError> {
     session_state.lock().await.close_all().await;
     mount::unmount_all(&mounts).await;
+
+    crate::lan::service::shutdown(&lan).await;
 
     let mut vault = state
         .lock()
@@ -210,7 +213,7 @@ pub async fn vault_change_password(
     let new_key = crypto::derive_key(&new_password, &new_kdf)?;
 
     let file_path = vault.file_path.clone();
-    let data = vault.get_data()?;
+    let data = vault.get_data_mut()?;
 
     if let Some(path) = file_path {
         store::save_vault(&path, &new_kdf, &new_key, data)?;
