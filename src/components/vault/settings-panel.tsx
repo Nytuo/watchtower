@@ -28,6 +28,7 @@ import { syncPush, syncStatus } from "@/lib/tauri";
 import { pullAndReload } from "@/hooks/use-sync";
 import { RefreshCw } from "lucide-react";
 import { Checkbox } from "@/components/ui/checkbox";
+import { useAnalyticsStore } from "@/lib/analytics";
 
 const REPO = "Nytuo/watchtower";
 
@@ -45,6 +46,7 @@ export function SettingsPanel() {
   const { activePanel, addToast, setTheme } = useUiStore();
   const tr = useT();
   const [lang, setLang] = useLang();
+  const analytics = useAnalyticsStore();
 
   const open = activePanel === "settings";
 
@@ -379,6 +381,34 @@ export function SettingsPanel() {
                 ]}
               />
             </div>
+          </fieldset>
+
+          <fieldset className="space-y-3">
+            <legend className="text-sm font-medium text-foreground">
+              Privacy &amp; analytics
+            </legend>
+            <p className="text-xs text-muted-foreground">
+              Opt-in, anonymous, sent to analytics.nytuo.fr. Applied
+              immediately.
+            </p>
+            <label className="flex items-center gap-2 text-sm">
+              <Checkbox
+                checked={analytics.usage}
+                onCheckedChange={(c) =>
+                  analytics.setConsent(c === true, analytics.errors)
+                }
+              />
+              Share anonymous usage counts
+            </label>
+            <label className="flex items-center gap-2 text-sm">
+              <Checkbox
+                checked={analytics.errors}
+                onCheckedChange={(c) =>
+                  analytics.setConsent(analytics.usage, c === true)
+                }
+              />
+              Send automatic bug reports
+            </label>
           </fieldset>
 
           <fieldset className="space-y-3">

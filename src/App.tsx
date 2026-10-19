@@ -7,6 +7,7 @@ import { Toaster } from "@/components/ui/toaster";
 import { CommandPalette } from "@/components/command-palette";
 import { SnippetRunDialog } from "@/components/snippet-run-dialog";
 import { AppDialogs } from "@/components/app-dialogs";
+import { AnalyticsDialog } from "@/components/analytics-dialog";
 import { ShortcutsDialog } from "@/components/shortcuts-dialog";
 import { KbdPromptDialog } from "@/components/kbd-prompt-dialog";
 import { useVaultStore } from "@/stores/vault-store";
@@ -41,6 +42,7 @@ export default function App() {
       <>
         <VaultPage />
         <AppDialogs />
+        <AnalyticsDialog />
         <Toaster />
       </>
     );
@@ -61,6 +63,7 @@ export default function App() {
       <ShortcutsDialog />
       <KbdPromptDialog />
       <AppDialogs />
+      <AnalyticsDialog />
       <Toaster />
     </>
   );

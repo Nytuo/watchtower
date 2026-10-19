@@ -5,6 +5,7 @@ import {
   makeAdhocServer,
   type AdhocConn,
 } from "@/stores/adhoc-store";
+import { trackEvent } from "@/lib/analytics";
 import type { ServerInfo } from "@/lib/tauri";
 
 let counter = 0;
@@ -20,6 +21,7 @@ export function connectServer(server: ServerInfo) {
   });
   useSessionStore.getState().setActiveSession(id);
   const p = (server.protocol || "ssh").toLowerCase();
+  trackEvent("connect", { protocol: p });
   useUiStore
     .getState()
     .setActiveView(

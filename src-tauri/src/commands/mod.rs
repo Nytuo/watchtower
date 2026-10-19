@@ -1,3 +1,4 @@
+pub mod analytics;
 pub mod biometric;
 pub mod cloud;
 pub mod ftp;

@@ -8,6 +8,7 @@ pub mod vault;
 
 use std::sync::Mutex;
 
+use crate::commands::analytics;
 use crate::commands::biometric;
 use crate::commands::cloud;
 use crate::commands::ftp;
@@ -50,6 +51,8 @@ pub fn run() {
         .manage::<ftp::SharedFtp>(tokio::sync::Mutex::new(std::collections::HashMap::new()))
         .manage::<mount::SharedMounts>(tokio::sync::Mutex::new(std::collections::HashMap::new()))
         .invoke_handler(tauri::generate_handler![
+            analytics::analytics_configure,
+            analytics::analytics_track,
             vault_commands::vault_create,
             vault_commands::vault_open,
             vault_commands::vault_lock,
